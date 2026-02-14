@@ -25,6 +25,7 @@ import torch.nn.functional as F
 from hs_tasnet import HSTasNet
 
 logger = logging.getLogger("hs_tasnet.export_onnx")
+DEFAULT_EPS = 1e-11
 
 
 # -----------------------------------------------------------------------------
@@ -113,16 +114,19 @@ class FakeComplexTensor:
       [..., 0] = real, [..., 1] = imag
     """
 
-    def __init__(self, real_imag_tensor: torch.Tensor):
+    def __init__(self, real_imag_tensor: torch.Tensor, *, eps: float = DEFAULT_EPS):
         if not isinstance(real_imag_tensor, torch.Tensor):
             raise TypeError("real_imag_tensor must be a torch.Tensor")
         if real_imag_tensor.ndim < 1 or real_imag_tensor.shape[-1] != 2:
             raise ValueError(f"expected trailing complex dim=2, got {tuple(real_imag_tensor.shape)}")
         self._tensor = real_imag_tensor
+        self._eps = float(eps)
 
     @classmethod
-    def from_real_imag(cls, real: torch.Tensor, imag: torch.Tensor) -> "FakeComplexTensor":
-        return cls(torch.stack([real, imag], dim=-1))
+    def from_real_imag(
+        cls, real: torch.Tensor, imag: torch.Tensor, *, eps: float = DEFAULT_EPS
+    ) -> "FakeComplexTensor":
+        return cls(torch.stack([real, imag], dim=-1), eps=eps)
 
     @property
     def real(self) -> torch.Tensor:
@@ -137,7 +141,8 @@ class FakeComplexTensor:
         return self._tensor.shape[:-1]
 
     def abs(self) -> torch.Tensor:
-        return torch.sqrt(self.real.square() + self.imag.square() + 1e-11)
+        # Numerical stability for magnitude computation (keep in sync with STFT eps default).
+        return torch.sqrt(self.real.square() + self.imag.square() + self._eps)
 
     def angle(self) -> torch.Tensor:
         return torch.atan2(self.imag, self.real)
@@ -148,7 +153,7 @@ class FakeComplexTensor:
     def __getitem__(self, key):
         out = self._tensor[key]
         if isinstance(out, torch.Tensor) and out.ndim >= 1 and out.shape[-1] == 2:
-            return FakeComplexTensor(out)
+            return FakeComplexTensor(out, eps=self._eps)
         return out
 
 
@@ -162,7 +167,7 @@ class ConvSTFTForONNX(nn.Module):
         self.n_fft = int(original_stft.n_fft)
         self.hop_length = int(original_stft.hop_length)
         self.win_length = int(original_stft.win_length)
-        self.eps = float(getattr(original_stft, "eps", 1e-11))
+        self.eps = float(getattr(original_stft, "eps", DEFAULT_EPS))
 
         window = original_stft.window.clone()
         self.register_buffer("window", window)
@@ -180,7 +185,7 @@ class ConvSTFTForONNX(nn.Module):
         x = audio.unsqueeze(1)  # (batch, 1, samples)
         real = F.conv1d(x, self.cos_filters, stride=self.hop_length)
         imag = F.conv1d(x, self.sin_filters, stride=self.hop_length)
-        spec = FakeComplexTensor.from_real_imag(real, imag)
+        spec = FakeComplexTensor.from_real_imag(real, imag, eps=self.eps)
         mag = torch.sqrt(real.square() + imag.square() + self.eps)
         return spec, mag
 
@@ -299,7 +304,10 @@ class RearrangeForONNX(nn.Module):
         if p == "b s 1 n -> b s n":
             return x.squeeze(2)
 
-        raise NotImplementedError(f"Unsupported Rearrange pattern for ONNX export: {p}")
+        raise NotImplementedError(
+            f"Unsupported Rearrange pattern for ONNX export: {p}. "
+            "Add support in RearrangeForONNX.forward()."
+        )
 
     def extra_repr(self) -> str:
         return f"pattern={self.pattern!r}, axes_lengths={self.axes_lengths!r}"
@@ -313,7 +321,12 @@ def _get_rearrange_pattern_and_axes(rearrange_layer: nn.Module) -> tuple[str, di
         # Fallback to repr parsing: Rearrange('...', ...)
         import re
 
-        m = re.search(r"Rearrange\\('([^']+)'", repr(rearrange_layer))
+        try:
+            m = re.search(r"Rearrange\('([^']+)'", repr(rearrange_layer))
+            if not m:
+                m = re.search(r'Rearrange\("([^"]+)"', repr(rearrange_layer))
+        except re.error:
+            m = None
         if m:
             pattern = m.group(1)
 
@@ -384,8 +397,11 @@ def _onnx_multiply(pattern: str, *args, **kwargs) -> torch.Tensor:
 
 
 def _onnx_divide(pattern: str, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    # Patterns in this repo all map to broadcast division.
-    return a / b
+    # Be strict here: a silent wrong export is worse than a loud failure.
+    p = " ".join(str(pattern).split())
+    if p in ("b n, n", "b n, n -> b n"):
+        return a / b
+    raise NotImplementedError(f"Unsupported einx.divide pattern for ONNX export: {pattern}")
 
 
 def _onnx_repeat(tensor: torch.Tensor, pattern: str, **axes_lengths) -> torch.Tensor:
@@ -600,8 +616,9 @@ def _write_onnx_metadata(path: Path, props: dict[str, str]) -> None:
             entry.key = k
             entry.value = existing[k]
 
-        # Save in-place. Since we did not load external tensor data, the model stays
-        # an external-data model when applicable.
+        # Save in-place. We intentionally do not load external tensor data to avoid
+        # reading large .onnx.data blobs; this should preserve existing external-data
+        # references, but behavior may vary across onnx versions.
         onnx.save_model(model, str(path))
     except Exception as e:
         logger.warning("Failed to embed ONNX metadata into %s: %s", path, e)
@@ -660,6 +677,10 @@ def load_model(ckpt_path: Path, device: torch.device) -> HSTasNet:
         return model.to(device)
 
     # Heuristic fallback.
+    logger.warning(
+        "Checkpoint is missing embedded config; using heuristic config inference. "
+        "Only run this export on trusted checkpoints."
+    )
     state = pkg["model"] if isinstance(pkg, dict) and "model" in pkg else pkg
     if not isinstance(state, dict):
         raise ValueError("Unsupported checkpoint format (expected a state_dict-like object)")
@@ -717,7 +738,13 @@ def load_model(ckpt_path: Path, device: torch.device) -> HSTasNet:
         num_sources=num_sources,
         spec_branch_use_phase=spec_branch_use_phase,
     )
-    model.load_state_dict(state, strict=False)
+    incompatible = model.load_state_dict(state, strict=False)
+    missing = getattr(incompatible, "missing_keys", None)
+    unexpected = getattr(incompatible, "unexpected_keys", None)
+    if missing:
+        logger.warning("Missing keys when loading checkpoint (strict=False): %s", missing)
+    if unexpected:
+        logger.warning("Unexpected keys when loading checkpoint (strict=False): %s", unexpected)
     return model.to(device)
 
 
