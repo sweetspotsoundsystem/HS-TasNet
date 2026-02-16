@@ -2,8 +2,8 @@
 Export HS-TasNet PyTorch checkpoint to ONNX format.
 
 Usage:
-  python export_onnx.py checkpoints/hs-tasnet.ckpt.1725.pt --output model.onnx
-  python export_onnx.py checkpoints/hs-tasnet.ckpt.1725.pt --output model.onnx --opset 18
+  python export_onnx.py checkpoints/hs-tasnet.ckpt.1673.pt --output model.onnx
+  python export_onnx.py checkpoints/hs-tasnet.ckpt.1673.pt --output model.onnx --opset 18
 """
 
 from __future__ import annotations
