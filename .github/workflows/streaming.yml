@@ -1,0 +1,26 @@
+name: Streaming model
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install inference test dependencies
+        run: python -m pip install numpy==2.2.6 onnxruntime==1.26.0 pytest soundfile
+      - name: Download and verify the released model
+        run: python scripts/download_streaming_model.py
+      - name: Check independent waveform parity and streaming lifecycle
+        run: python -m pytest tests/test_streaming.py tests/test_download_streaming_model.py -q

@@ -4,6 +4,43 @@
 
 Implementation of [HS-TasNet](https://arxiv.org/abs/2402.17701), "Real-time Low-latency Music Source Separation using Hybrid Spectrogram-TasNet", proposed by the research team at L-Acoustics
 
+## Pretrained streaming model
+
+The released model separates **stereo 44.1 kHz audio** into **Drums, Bass,
+Vocals and Other**. It combines spectrogram and waveform estimates with
+recurrent state, using a 1024-sample analysis window, a 256-sample synthesis
+frame and a 128-sample hop. Its output is delayed by one hop (2.90 ms).
+[StemgenRT](https://github.com/sweetspotsoundsystem/stemgen-rt) adds asynchronous
+scheduling for DAW use: 256 samples / 5.80 ms total with a 128-sample host buffer.
+
+Install from this checkout and download the self-contained ONNX weights:
+
+```bash
+python scripts/download_streaming_model.py
+pip install -e '.[streaming]'
+python examples/separate_streaming.py stereo-44100.wav stems --model models/hop128.onnx
+```
+
+The example writes four floating-point WAVs with the original length and sample
+alignment. It requires stereo input already at 44.1 kHz and preserves its level.
+
+```python
+import soundfile as sf
+from hs_tasnet.streaming import StreamingSeparator
+
+audio, sample_rate = sf.read("stereo-44100.wav", dtype="float32", always_2d=True)
+separator = StreamingSeparator("models/hop128.onnx", sample_rate=sample_rate)
+stems = separator.separate(audio.T)  # [4, 2, samples]: drums, bass, vocals, other
+```
+
+For chunked integration, use `process_chunk`, `flush` and `reset`; see the
+[model interface](models/README.md). The Python API runs synchronously on CPU
+and allocates memory, so call it from a worker when integrating with playback.
+The download is pinned to the same model used by StemgenRT and verified by
+size and SHA-256. Weights are not included in the Python wheel.
+The original PyTorch architecture and training API below remain available;
+`HSTasNet()` constructs an untrained model and does not load these weights.
+
 ## Install
 
 ```bash
