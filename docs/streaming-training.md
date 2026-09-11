@@ -37,7 +37,7 @@ c204b0fcb9627ca7fecd287db42fb869a1ae6783a1bc24cf2d8864c3b4a565fb
 ```
 
 This produces model weights for fresh fine-tuning; the ONNX graph contains no
-historical optimizer state. The imported checkpoint is approximately 106 MB.
+historical optimizer state. The imported checkpoint is approximately 111 MB.
 
 ```python
 import torch
@@ -132,7 +132,7 @@ to false retains the ordinary augmentation for every example.
 `metrics.jsonl` records each update's losses, gradient norm, crop addresses and
 input fingerprints. Checkpoints include model weights, Adam, RNG state, the
 configuration, manifest hash and next absolute data index. A training
-checkpoint is approximately 319 MB. Checkpoints accumulate at
+checkpoint is approximately 334 MB. Checkpoints accumulate at
 `checkpoint_every` and at the requested endpoint; choose enough disk space for
 the configured stage. Output directories and checkpoint files must be new.
 
