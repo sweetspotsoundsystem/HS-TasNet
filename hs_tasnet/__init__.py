@@ -6,13 +6,16 @@ the ONNX streaming module does not initialize PyTorch or dataset libraries.
 
 from importlib import import_module
 
-__all__ = ["HSTasNet", "Trainer", "MusDB18HQ"]
+__all__ = ["HSTasNet", "Trainer", "MusDB18HQ", "StreamingHSTasNet", "StreamingState"]
 
 
 def __getattr__(name):
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = ".hs_tasnet" if name == "HSTasNet" else ".trainer"
+    if name in ("StreamingHSTasNet", "StreamingState"):
+        module = ".streaming_model"
+    else:
+        module = ".hs_tasnet" if name == "HSTasNet" else ".trainer"
     value = getattr(import_module(module, __name__), name)
     globals()[name] = value
     return value
