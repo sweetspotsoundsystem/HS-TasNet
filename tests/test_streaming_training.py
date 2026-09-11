@@ -181,3 +181,41 @@ def test_learning_rate_endpoints_and_invalid_config():
     assert learning_rate(config.steps - 1, config) == config.min_lr
     with pytest.raises(ValueError):
         replace(config, batch_size=3).validate()
+
+
+@pytest.mark.parametrize("device, expected_index", [("cuda", 2), ("cuda:3", 3)])
+def test_cuda_setup_resolves_device_before_precision_check(monkeypatch, tmp_path, device, expected_index):
+    import hs_tasnet.streaming_trainer as trainer
+
+    class DatasetReached(Exception):
+        pass
+
+    current = {"index": 2}
+    calls = []
+
+    def set_device(selected):
+        if selected.index is None:
+            raise ValueError("CUDA setup requires an indexed device")
+        current["index"] = selected.index
+        calls.append(("device", selected.index))
+
+    def supports_bf16():
+        calls.append(("bf16", current["index"]))
+        return True
+
+    def memory_fraction(fraction, selected):
+        calls.append(("memory", fraction, selected.index))
+
+    def load_manifest(*args, **kwargs):
+        raise DatasetReached
+
+    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: current["index"])
+    monkeypatch.setattr(torch.cuda, "set_device", set_device)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", supports_bf16)
+    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", memory_fraction)
+    monkeypatch.setattr(trainer, "load_manifest", load_manifest)
+    with pytest.raises(DatasetReached):
+        trainer.train_streaming(StreamingTrainConfig(), tmp_path / "manifest.json", tmp_path / "run", device=device)
+    assert calls == [("device", expected_index), ("bf16", expected_index), ("memory", .75, expected_index)]

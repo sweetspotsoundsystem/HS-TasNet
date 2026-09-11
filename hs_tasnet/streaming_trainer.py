@@ -120,9 +120,12 @@ def train_streaming(config, manifest, output, *, checkpoint=None, resume=None, t
     if device.type == "cuda":
         require(os.environ.get("CUBLAS_WORKSPACE_CONFIG") in (":4096:8", ":16:8"),
                 "Set CUBLAS_WORKSPACE_CONFIG=:4096:8 before CUDA initialization")
-        require(torch.cuda.is_available() and (config.precision != "bf16" or torch.cuda.is_bf16_supported()),
-                "Requested CUDA precision is unavailable")
+        require(torch.cuda.is_available(), "CUDA is unavailable")
+        if device.index is None:
+            device = torch.device("cuda", torch.cuda.current_device())
         torch.cuda.set_device(device)
+        require(config.precision != "bf16" or torch.cuda.is_bf16_supported(),
+                "Requested CUDA precision is unavailable")
         torch.cuda.set_per_process_memory_fraction(.75, device)
     else:
         require(config.precision == "fp32", "CPU training requires precision=fp32")
