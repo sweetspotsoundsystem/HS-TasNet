@@ -30,16 +30,19 @@ class StreamingSeparator:
     ``flush`` emits the last pending hop and resets the stream.
     """
 
-    def __init__(self, model_path, *, sample_rate=SAMPLE_RATE):
+    def __init__(self, model_path, *, sample_rate=SAMPLE_RATE, expected_sha256=MODEL_SHA256):
         if sample_rate != SAMPLE_RATE:
             raise ValueError("The released model requires 44100 Hz stereo audio")
+        if (not isinstance(expected_sha256, str) or len(expected_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in expected_sha256)):
+            raise ValueError("expected_sha256 must be a lowercase SHA-256 digest")
         path = Path(model_path)
         digest = sha256()
         with path.open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(block)
-        if digest.hexdigest() != MODEL_SHA256:
-            raise ValueError("Model SHA-256 differs; run scripts/download_streaming_model.py")
+        if digest.hexdigest() != expected_sha256:
+            raise ValueError("Model SHA-256 differs from the expected model")
 
         import onnxruntime as ort
 

@@ -38,8 +38,30 @@ For chunked integration, use `process_chunk`, `flush` and `reset`; see the
 and allocates memory, so call it from a worker when integrating with playback.
 The download is pinned to the same model used by StemgenRT and verified by
 size and SHA-256. Weights are not included in the Python wheel.
-The original PyTorch architecture and training API below remain available;
-`HSTasNet()` constructs an untrained model and does not load these weights.
+
+## Trainable streaming model
+
+`StreamingHSTasNet` is the PyTorch architecture used by the released weights.
+Import those weights, fine-tune on aligned stem WAVs, resume Adam checkpoints,
+and export a verified streaming ONNX model with the
+[streaming training guide](docs/streaming-training.md).
+
+```bash
+pip install -e '.[streaming,onnx]'
+python scripts/import_streaming_weights.py --onnx models/hop128.onnx --output models/hop128.pt
+```
+
+```python
+import torch
+from hs_tasnet import StreamingHSTasNet
+
+model = StreamingHSTasNet.from_checkpoint("models/hop128.pt")
+stems = model.separate(torch.zeros(1, 2, 44100))  # aligned [1,4,2,44100]
+```
+
+The original `HSTasNet` and `Trainer` API below remain available for the older
+configurable architecture. `HSTasNet()` and `StreamingHSTasNet()` both initialize
+untrained weights; use `StreamingHSTasNet.from_checkpoint` for this release.
 
 ## Install
 

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, release/hop128-model]
 
 permissions:
   contents: read
@@ -24,3 +24,28 @@ jobs:
         run: python scripts/download_streaming_model.py
       - name: Check independent waveform parity and streaming lifecycle
         run: python -m pytest tests/test_streaming.py tests/test_download_streaming_model.py -q
+
+  training:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CUDA_VISIBLE_DEVICES: ''
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install CPU training and export dependencies
+        run: |
+          python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.2.6 onnx==1.19.1 onnxruntime==1.26.0 pytest soundfile
+          python -m pip install -e . --no-deps
+      - name: Download and import the released weights
+        run: |
+          python scripts/download_streaming_model.py
+          python scripts/import_streaming_weights.py
+      - name: Check model, loss, exact Adam resume and ONNX export
+        run: python -m pytest tests/test_streaming_model.py tests/test_streaming_training.py tests/test_streaming_export.py -q

@@ -1,0 +1,20 @@
+{
+  "steps": 2,
+  "batch_size": 4,
+  "microbatch_size": 4,
+  "crop_samples": 512,
+  "warmup_samples": 128,
+  "lr": 0.000001,
+  "min_lr": 0.0000001,
+  "warmup": 0,
+  "checkpoint_every": 2,
+  "seed": 123,
+  "data_seed": 60,
+  "data_start": 0,
+  "vocal_active_probability": 0.0,
+  "controlled_views": true,
+  "teacher_weight": 0.0,
+  "deployed_truth_weight": 0.5,
+  "precision": "fp32",
+  "workers": 0
+}
