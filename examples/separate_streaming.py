@@ -5,7 +5,7 @@ from pathlib import Path
 
 import soundfile as sf
 
-from hs_tasnet.streaming import SOURCE_ORDER, StreamingSeparator
+from hs_tasnet.streaming import MODEL_SHA256, SOURCE_ORDER, StreamingSeparator
 
 
 def main():
@@ -13,9 +13,10 @@ def main():
     parser.add_argument("input", type=Path)
     parser.add_argument("output_directory", type=Path)
     parser.add_argument("--model", type=Path, default=Path("models/hop128.onnx"))
+    parser.add_argument("--sha256", default=MODEL_SHA256, help="Expected model digest from the export verification report")
     args = parser.parse_args()
     audio, rate = sf.read(args.input, dtype="float32", always_2d=True)
-    separator = StreamingSeparator(args.model, sample_rate=rate)
+    separator = StreamingSeparator(args.model, sample_rate=rate, expected_sha256=args.sha256)
     stems = separator.separate(audio.T)
     args.output_directory.mkdir(parents=True, exist_ok=True)
     for name, stem in zip(SOURCE_ORDER, stems):
