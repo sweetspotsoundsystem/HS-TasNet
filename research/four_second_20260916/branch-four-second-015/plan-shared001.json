@@ -3998,12 +3998,7 @@
     "/home/axel/autoresearch/codex/HS-TasNet/research/direct/run_latency58_four_second_shared_quality.py": "5fe1b99ddc8ab89b3e5eb362970f7899b9671221cb0befaa63e4b7c5c1a78b1e",
     "/home/axel/autoresearch/codex/HS-TasNet/research/direct/evaluate_latency58_four_second_shared_memory.py": "d9b55daf7a0a26771e586675756c7f2c392261547e16ae8568830c01d537fd87",
     "/home/axel/autoresearch/codex/HS-TasNet/research/direct/evaluate_latency58_four_second_shared_vocal_views.py": "2f59c7860ae56c21e474629416a9aef5c98f8f52bdfd0db3ac26af50e8ee1196",
-    "/home/axel/autoresearch/codex/HS-TasNet/research/direct/check_latency58_four_second_shared_vocal_views.py": "3aa4609eab26ee809a07181a15f56f71a23db12de4be2ef311c23bcdafe4efe6",
-    "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/branch-four-second-015/plan-shared001.json": "42cad0ed2e5e0f098daea8944caa492edcdfad4ee08908d35280caf4d56f0c12",
-    "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/branch-four-second-015/post-interruption-recovery-audit-001.json": "43e990adcd92df45311a360854b55d3941da80521d56668362642f5d5e6cbdbd",
-    "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/monitors/branch-four-second-015-attachment-001/result.json": "d8604416297e6601ce5d2c6302fa0dda78c53611546b89e3846f4668ca548689",
-    "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/monitors/branch-four-second-015-production/child.log": "2fda27d58bafe12efd610b550c155d861758fff1dea496d1573f0218ec15ec14",
-    "/home/axel/autoresearch/codex/HS-TasNet/research/direct/resume_latency58_four_second_shared.py": "526d0a656f87b12ea2cc2b7d7c6e6b5649b84b878fd7e4e537789d2d834a9ba5"
+    "/home/axel/autoresearch/codex/HS-TasNet/research/direct/check_latency58_four_second_shared_vocal_views.py": "3aa4609eab26ee809a07181a15f56f71a23db12de4be2ef311c23bcdafe4efe6"
   },
   "environment": {
     "CUDA_VISIBLE_DEVICES": "0",
@@ -4978,29 +4973,5 @@
       "path": "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/monitors/shared-four-second-gpu-001/result.json",
       "sha256": "46d18e39a0f2f368ec4ec1e354e1b6a3986e50d3465955ecf0b20800cfa529d5"
     }
-  },
-  "resume_checkpoint": {
-    "training_plan": {
-      "path": "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/branch-four-second-015/plan-shared001.json",
-      "sha256": "42cad0ed2e5e0f098daea8944caa492edcdfad4ee08908d35280caf4d56f0c12"
-    },
-    "snapshot": {
-      "path": "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/branch-four-second-015/production-run-interrupted-step800/recovery.packed.pt",
-      "sha256": "6cbcd99e56e3cf49cf74dd58517cbf23f2aa1f3d3741452752c3db009b9d4c6a",
-      "receipt": "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/branch-four-second-015/production-run-interrupted-step800/packed-recovery-receipts/step-000750.json",
-      "receipt_sha256": "dabf5729d36602e7b4c5442a70c5c84ba45f21a1acf30f608635f8de99d63639",
-      "step": 750
-    }
-  },
-  "recovery_controller_module": "research.direct.resume_latency58_four_second_shared",
-  "operational_recovery": {
-    "reason": "pytest temporary symlink tripped storage audit before step800 save",
-    "last_saved_step": 750,
-    "interrupted_completed_step": 800,
-    "unsaved_updates_repeated": 50,
-    "interrupted_run": "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916/branch-four-second-015/production-run-interrupted-step800",
-    "raw_adam_ema_rng_restored": true,
-    "training_arithmetic_changed": false,
-    "historical_trainer_actual_exit_code": null
   }
 }

@@ -77,6 +77,18 @@ def write_snapshot(args):
     bound_sources = sorted(Path(p).relative_to(source).as_posix()
                            for p in frozen_plan["source_bindings"]
                            if Path(p).suffix == ".py" and Path(p).is_relative_to(source))
+    # A resumed trajectory also needs the immutable original training recipe.
+    predecessor = frozen_plan
+    while predecessor.get("resume_checkpoint"):
+        previous = Path(predecessor["resume_checkpoint"]["training_plan"]["path"])
+        if not previous.is_relative_to(source):
+            raise ValueError("Recovery training plans must belong to the research checkout")
+        relative = previous.relative_to(source).as_posix()
+        if relative in bound_sources:
+            raise ValueError("Cycle in recovery training plans")
+        bound_sources.append(relative)
+        predecessor = json.loads(previous.read_text())
+    bound_sources.sort()
     files = {dest: ("repository", path.relative_to(source).as_posix(), path)
              for dest, path in inventory(source, bound_sources).items()}
     for path in sorted(production.glob("*.py")) + sorted((production / "tests").glob("*.py")):

@@ -40,3 +40,9 @@ gates. Keep model selection and experimental results accurate.
 
 Work in a separate checkout while a source-bound run is active. Preserve its
 source files, original frozen inputs, rollback models and monitoring.
+For local tests sharing a monitored artifact allocation, use
+`python scripts/run_cpu_tests.py ... --basetemp=/allocated/path/to/new-test-directory`.
+This suppresses pytest's optional `current` symlinks throughout execution;
+cleaning them after the tests is too late for a concurrent storage audit.
+Keep all generated test checkpoints inside the allocation and remove the
+finished temporary directory after reviewing the result.

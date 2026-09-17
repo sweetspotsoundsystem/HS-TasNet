@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -39,6 +40,23 @@ def test_complete_source_snapshot():
     for relative in manifest["files"]:
         if relative.endswith(".py"):
             compile((ROOT / relative).read_bytes(), relative, "exec")
+
+
+def test_recovery_evaluation_changes_only_bound_artifact_paths():
+    directory = ROOT / "research/direct"
+    original = ast.parse((directory / "run_latency58_four_second_shared_quality.py").read_text())
+    recovered = ast.parse((directory / "run_latency58_four_second_recovery_quality.py").read_text())
+    paths = {"plan-recovery001.json": "plan-shared001.json",
+             "recovery-stage-001/execution.json": "production-stage/execution.json",
+             "recovery-root-execution-001.json": "production-root-execution.json",
+             "recovery-stage-001/command.json": "production-root-command.json"}
+    class Normalize(ast.NodeTransformer):
+        def visit_Constant(self, node):
+            if isinstance(node.value, str):
+                for current, previous in paths.items():
+                    node.value = node.value.replace(current, previous)
+            return node
+    assert ast.dump(original, include_attributes=False) == ast.dump(Normalize().visit(recovered), include_attributes=False)
 
 
 def test_current_native_and_released_state_contract():

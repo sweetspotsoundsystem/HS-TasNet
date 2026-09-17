@@ -31,6 +31,7 @@ older baseline and its portable fine-tuning CLI.
 | Adam, EMA and exact restore | `latency58_branch_memory_checkpoint.py`, `latency58_branch_ema.py`, `latency58_grouped_vocal_recovery.py` |
 | Packed recovery and atomic publication | `latency58_lossless_recovery_codec_v3.py`, `latency58_four_second_recovery_files.py` |
 | Monitored launch and adoption | `run_latency58_four_second_shared.py`, `watch_latency58_four_second.py`, `attach_latency58_four_second.py` |
+| Monitored resume after a storage abort | `resume_latency58_four_second_shared.py`, `supervise_latency58_four_second_recovery.py` |
 | Saved raw/EMA evaluation | `evaluate_latency58_four_second_shared_memory.py`, `latency58_four_second_shared_evaluation.py`, `run_latency58_four_second_shared_quality.py` |
 | Streaming evaluation and metrics | `research/direct/latency58_evaluate.py`, `research/metrics.py` |
 | FP32 export | `latency58_branch_onnx.py`, `latency58_branch_onnx_export.py`, root `export_onnx.py` |
@@ -67,6 +68,25 @@ and shares their storage without changing forward or backward arithmetic.
 Recovery retains raw weights, Adam moments, EMA, CPU/CUDA/Python/NumPy RNG,
 sample addresses, the journal and schedule. Byte-plane compression and XOR
 references are lossless and are checked against the authenticated parent.
+
+The active plan now records an operational resume from update 750 after a
+temporary pytest symlink triggered the storage guard at update 800. The
+interrupted run and journal are retained; the 50 unsaved updates are repeated
+from the saved raw/Adam/EMA/RNG state. The training recipe and schedule are
+unchanged. The original plan is included alongside the resumed plan's source
+snapshot. `resume_latency58_four_second_shared.py` prepares and launches this
+specific audited recovery; the fresh-stage controller below rejects resume
+plans. Local tests sharing the monitored allocation use
+`scripts/run_cpu_tests.py` to suppress pytest's temporary symlinks before they
+are created.
+
+After this resumed run completes, use
+`python -m research.direct.run_latency58_four_second_recovery_quality --training-plan /path/to/plan-recovery001.json`.
+This controller reads the recovery execution receipts and plan. Its complete
+syntax tree matches the original quality controller after normalizing those
+four artifact paths; all saved-state, full-panel, per-stem and source-view
+checks remain intact. The frozen plan's original controller fields retain
+their historical values.
 
 ## Run and inspect
 

@@ -5636,6 +5636,12 @@
       "sha256": "4e0667c6aefa85d4987f1ce146c143c3ff25dc95ca4146743a7a173b3c2ec817",
       "source_path": "research/direct/resume_latency58_context_horizon.py"
     },
+    "research/direct/resume_latency58_four_second_shared.py": {
+      "bytes": 10835,
+      "origin": "repository",
+      "sha256": "526d0a656f87b12ea2cc2b7d7c6e6b5649b84b878fd7e4e537789d2d834a9ba5",
+      "source_path": "research/direct/resume_latency58_four_second_shared.py"
+    },
     "research/direct/retire_latency58_closed_accum_optimizers.py": {
       "bytes": 10279,
       "origin": "repository",
@@ -6103,6 +6109,12 @@
       "origin": "repository",
       "sha256": "43a7954f6e5af9c26d29f0ef60a8d9bfabea0fe5a4365c699f4482630c05da67",
       "source_path": "research/direct/run_latency58_four_second_quality_v3.py"
+    },
+    "research/direct/run_latency58_four_second_recovery_quality.py": {
+      "bytes": 26981,
+      "origin": "repository",
+      "sha256": "030dcdcceb1b929b34071c1aada848bb3a6e7fecaa1dc2f1c3a75f7fa85952d8",
+      "source_path": "research/direct/run_latency58_four_second_recovery_quality.py"
     },
     "research/direct/run_latency58_four_second_shared.py": {
       "bytes": 12707,
@@ -6776,6 +6788,12 @@
       "sha256": "6797e9f5c0ce4d35bae40c24d79b3c2ff5f2e5402b3c0397dcacac02f68df3ad",
       "source_path": "research/direct/snapshot_latency58_asymmetric.py"
     },
+    "research/direct/supervise_latency58_four_second_recovery.py": {
+      "bytes": 2399,
+      "origin": "repository",
+      "sha256": "8e4c3068c10878a9fd4629f30bb1b1d532c69ab637377f1531f4f3a4fe866749",
+      "source_path": "research/direct/supervise_latency58_four_second_recovery.py"
+    },
     "research/direct/train.py": {
       "bytes": 13993,
       "origin": "repository",
@@ -7226,6 +7244,12 @@
       "sha256": "095a909f1ea896f4d36876c886d8a11e845f4067a429e4ed05422341f7d2840d",
       "source_path": "research/experiment.py"
     },
+    "research/four_second_20260916/branch-four-second-015/plan-shared001.json": {
+      "bytes": 719782,
+      "origin": "repository",
+      "sha256": "42cad0ed2e5e0f098daea8944caa492edcdfad4ee08908d35280caf4d56f0c12",
+      "source_path": "research/four_second_20260916/branch-four-second-015/plan-shared001.json"
+    },
     "research/four_second_20260916/geometry-restart-cpu-001/supervise.py": {
       "bytes": 4798,
       "origin": "repository",
@@ -7335,10 +7359,10 @@
       "source_path": "train_production.py"
     },
     "research/recipes/active-plan.json": {
-      "bytes": 719782,
+      "bytes": 722187,
       "origin": "repository",
-      "sha256": "42cad0ed2e5e0f098daea8944caa492edcdfad4ee08908d35280caf4d56f0c12",
-      "source_path": "research/four_second_20260916/branch-four-second-015/plan-shared001.json"
+      "sha256": "35d067fd599b2a93b8acacd34c0ca561bd95b2eb2b8c3771f59c2096ba3e93d7",
+      "source_path": "research/four_second_20260916/branch-four-second-015/plan-recovery001.json"
     },
     "tests/test_export_onnx.py": {
       "bytes": 8123,
@@ -7809,6 +7833,7 @@
     "research/direct/reserve_latency58_direct_sdr.py",
     "research/direct/reserve_latency58_direct_sdr_followup.py",
     "research/direct/reserve_latency58_full_magnitude.py",
+    "research/direct/resume_latency58_four_second_shared.py",
     "research/direct/retire_latency58_vocal_focus_optimizer.py",
     "research/direct/run_latency58_attention_sdr_blend.py",
     "research/direct/run_latency58_branch_controlled_remix.py",
@@ -7956,6 +7981,7 @@
     "research/evaluate.py",
     "research/evaluation_schema.py",
     "research/experiment.py",
+    "research/four_second_20260916/branch-four-second-015/plan-shared001.json",
     "research/four_second_20260916/geometry-restart-cpu-001/supervise.py",
     "research/four_second_20260916/single-model-cpu-001/supervise.py",
     "research/four_second_20260916/single-restart-cpu-001/supervise.py",
