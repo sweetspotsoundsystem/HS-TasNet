@@ -4,6 +4,8 @@ Export HS-TasNet PyTorch checkpoint to ONNX format.
 Usage:
   python export_onnx.py checkpoints/hs-tasnet.ckpt.1673.pt --output model.onnx
   python export_onnx.py checkpoints/hs-tasnet.ckpt.1673.pt --output model.onnx --opset 18
+  python export_onnx.py checkpoint.pt --mode streaming --residual-source-index 3 \
+      --no-external-data --output model-streaming-mixture-consistent.onnx
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import json
 import logging
 import math
 import warnings
@@ -26,6 +29,7 @@ from hs_tasnet import HSTasNet
 
 logger = logging.getLogger("hs_tasnet.export_onnx")
 DEFAULT_EPS = 1e-11
+DEFAULT_RESIDUAL_SOURCE_INDEX: int | None = None
 
 
 # -----------------------------------------------------------------------------
@@ -168,9 +172,14 @@ class ConvSTFTForONNX(nn.Module):
         self.hop_length = int(original_stft.hop_length)
         self.win_length = int(original_stft.win_length)
         self.eps = float(getattr(original_stft, "eps", DEFAULT_EPS))
+        self.fixed_inverse_frames: int | None = None
 
         window = original_stft.window.clone()
         self.register_buffer("window", window)
+        streaming_envelope = getattr(original_stft, "streaming_envelope", None)
+        if not isinstance(streaming_envelope, torch.Tensor):
+            raise ValueError("STFT module is missing its streaming envelope")
+        self.register_buffer("streaming_envelope", streaming_envelope.clone())
 
         cos_filters, sin_filters = create_dft_filters(self.n_fft, self.win_length, window)
         self.register_buffer("cos_filters", cos_filters)
@@ -189,7 +198,7 @@ class ConvSTFTForONNX(nn.Module):
         mag = torch.sqrt(real.square() + imag.square() + self.eps)
         return spec, mag
 
-    def inverse(self, spec: Any) -> torch.Tensor:
+    def inverse(self, spec: Any, is_streaming: bool = False) -> torch.Tensor:
         # spec may be FakeComplexTensor, complex tensor, or (..., 2) real tensor.
         if isinstance(spec, FakeComplexTensor):
             spec_real = spec.real
@@ -215,7 +224,11 @@ class ConvSTFTForONNX(nn.Module):
         # (batch, win_length, frames) for fold
         time_frames = time_frames.transpose(1, 2)
 
-        frames = time_frames.shape[-1]
+        frames = (
+            time_frames.shape[-1]
+            if self.fixed_inverse_frames is None
+            else self.fixed_inverse_frames
+        )
         output_size = (frames - 1) * self.hop_length + self.win_length
 
         y = F.fold(
@@ -224,6 +237,9 @@ class ConvSTFTForONNX(nn.Module):
             kernel_size=(1, self.win_length),
             stride=(1, self.hop_length),
         )[:, 0, 0]
+
+        if is_streaming:
+            return y / self.streaming_envelope.clamp(min=self.eps)
 
         window_sq = self.window.square().view(1, self.win_length, 1).expand(1, self.win_length, frames)
         env = F.fold(
@@ -245,14 +261,21 @@ class ConvTranspose1DWithHannWindowForONNX(nn.Module):
         super().__init__()
         self.stride = original_conv.stride
         self.padding = original_conv.padding
+        self.out_channels = int(original_conv.out_channels)
+        self.kernel_size = tuple(int(value) for value in original_conv.kernel_size)
+        self.hann_window_baked = bool(getattr(original_conv, "hann_window_baked", False))
         self.register_buffer("weight", original_conv.weight.clone())
         self.register_buffer("window", original_conv.window.clone())
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        windowed_filters = self.weight * self.window
+    def forward(self, x: torch.Tensor, is_streaming: bool = False) -> torch.Tensor:
+        filters = self.weight if self.hann_window_baked else self.weight * self.window
+        if is_streaming and self.hann_window_baked and x.shape[-1] == 1:
+            decoded = F.linear(x[..., 0], filters.flatten(1).t(), bias=None)
+            return decoded.view(x.shape[0], self.out_channels, self.kernel_size[0])
+
         # Match the original implementation (no bias passed).
         return F.conv_transpose1d(
-            x, windowed_filters, stride=self.stride, padding=self.padding
+            x, filters, stride=self.stride, padding=self.padding
         )
 
 
@@ -313,6 +336,76 @@ class RearrangeForONNX(nn.Module):
         return f"pattern={self.pattern!r}, axes_lengths={self.axes_lengths!r}"
 
 
+class RMSNormForONNX(nn.Module):
+    """Small ONNX-friendly equivalent of ``torch.nn.RMSNorm``."""
+
+    def __init__(self, original: nn.RMSNorm):
+        super().__init__()
+        if not bool(original.elementwise_affine) or original.weight is None:
+            raise ValueError("ONNX RMSNorm replacement requires affine weights")
+        eps = original.eps
+        if eps is None:
+            eps = torch.finfo(original.weight.dtype).eps
+        self.eps = float(eps)
+        self.register_buffer("weight", original.weight.detach().clone())
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = torch.rsqrt(x.square().mean(dim=-1, keepdim=True) + self.eps)
+        return x * rms * self.weight
+
+
+class OneFrameGRUForONNX(nn.Module):
+    """Exact, exportable GRU recurrence for the one-frame c91 streaming graph."""
+
+    def __init__(self, original: nn.GRU):
+        super().__init__()
+        if not original.batch_first:
+            raise ValueError("c91 streaming export requires a batch-first GRU")
+        if original.bidirectional:
+            raise ValueError("c91 streaming export requires a unidirectional GRU")
+        if not original.bias:
+            raise ValueError("c91 streaming export requires GRU bias tensors")
+        if float(original.dropout) != 0.0:
+            raise ValueError("c91 streaming export does not support GRU dropout")
+
+        self.input_size = int(original.input_size)
+        self.hidden_size = int(original.hidden_size)
+        self.num_layers = int(original.num_layers)
+        for layer in range(self.num_layers):
+            for prefix in ("weight_ih", "weight_hh", "bias_ih", "bias_hh"):
+                value = getattr(original, f"{prefix}_l{layer}")
+                self.register_buffer(f"{prefix}_l{layer}", value.detach().clone())
+
+    def forward(
+        self, x: torch.Tensor, hidden: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        layer_input = x[:, 0]
+        next_hidden: list[torch.Tensor] = []
+        for layer in range(self.num_layers):
+            previous = hidden[layer]
+            input_gates = F.linear(
+                layer_input,
+                getattr(self, f"weight_ih_l{layer}"),
+                getattr(self, f"bias_ih_l{layer}"),
+            )
+            hidden_gates = F.linear(
+                previous,
+                getattr(self, f"weight_hh_l{layer}"),
+                getattr(self, f"bias_hh_l{layer}"),
+            )
+            input_reset, input_update, input_new = input_gates.chunk(3, dim=-1)
+            hidden_reset, hidden_update, hidden_new = hidden_gates.chunk(3, dim=-1)
+            reset = torch.sigmoid(input_reset + hidden_reset)
+            update = torch.sigmoid(input_update + hidden_update)
+            candidate = torch.tanh(input_new + reset * hidden_new)
+            current = candidate + update * (previous - candidate)
+            next_hidden.append(current)
+            layer_input = current
+
+        stacked_hidden = torch.stack(next_hidden, dim=0)
+        return layer_input.unsqueeze(1), stacked_hidden
+
+
 def _get_rearrange_pattern_and_axes(rearrange_layer: nn.Module) -> tuple[str, dict]:
     pattern = getattr(rearrange_layer, "pattern", None)
     if not isinstance(pattern, str):
@@ -354,6 +447,16 @@ def replace_rearrange_layers(module: nn.Module) -> nn.Module:
 
         replace_rearrange_layers(child)
 
+    return module
+
+
+def replace_rmsnorm_layers(module: nn.Module) -> nn.Module:
+    for name, child in list(module.named_children()):
+        if isinstance(child, nn.RMSNorm):
+            setattr(module, name, RMSNormForONNX(child))
+            logger.debug("Replaced RMSNorm layer %s", name)
+            continue
+        replace_rmsnorm_layers(child)
     return module
 
 
@@ -526,13 +629,22 @@ def onnx_export_patches() -> Iterator[None]:
 # -----------------------------------------------------------------------------
 
 
-def patch_model_for_onnx(model: HSTasNet) -> HSTasNet:
+def patch_model_for_onnx(model: HSTasNet, *, streaming: bool = False) -> HSTasNet:
     """
     Replace submodules that are problematic for ONNX export.
     """
     model.stft = ConvSTFTForONNX(model.stft)
     model.conv_decode = ConvTranspose1DWithHannWindowForONNX(model.conv_decode)
+    replace_rmsnorm_layers(model)
     replace_rearrange_layers(model)
+    if streaming:
+        if bool(model.use_branch_rnns):
+            raise ValueError(
+                "streaming ONNX export currently supports c91 branchless recurrence only"
+            )
+        if not isinstance(model.fusion_branch, nn.GRU):
+            raise ValueError("streaming ONNX export currently supports a fusion GRU only")
+        model.fusion_branch = OneFrameGRUForONNX(model.fusion_branch)
     return model
 
 
@@ -624,6 +736,40 @@ def _write_onnx_metadata(path: Path, props: dict[str, str]) -> None:
         logger.warning("Failed to embed ONNX metadata into %s: %s", path, e)
 
 
+def resolve_residual_source_index(
+    num_sources: int, residual_source_index: int | None
+) -> int | None:
+    if residual_source_index is None:
+        return None
+    index = int(residual_source_index)
+    if index < 0:
+        index += int(num_sources)
+    if not 0 <= index < int(num_sources):
+        raise ValueError(
+            f"residual source index {residual_source_index} is outside "
+            f"the {num_sources}-source output"
+        )
+    return index
+
+
+def route_mixture_residual(
+    separated: torch.Tensor,
+    mixture: torch.Tensor,
+    *,
+    residual_source_index: int,
+) -> torch.Tensor:
+    """Route all reconstruction residual to one stem without changing the others."""
+    index = int(residual_source_index)
+    before = separated[:, :index]
+    after = separated[:, index + 1 :]
+    non_residual_sources = torch.cat((before, after), dim=1)
+    residual_source = mixture - non_residual_sources.sum(dim=1)
+    return torch.cat(
+        (before, residual_source.unsqueeze(1), after),
+        dim=1,
+    )
+
+
 class HSTasNetONNXWrapper(nn.Module):
     """
     Stateless wrapper for non-streaming ONNX export.
@@ -632,9 +778,17 @@ class HSTasNetONNXWrapper(nn.Module):
     Output: separated (b, sources, channels, samples)
     """
 
-    def __init__(self, model: HSTasNet):
+    def __init__(
+        self,
+        model: HSTasNet,
+        *,
+        residual_source_index: int | None = DEFAULT_RESIDUAL_SOURCE_INDEX,
+    ):
         super().__init__()
         self.model = model
+        self.residual_source_index = resolve_residual_source_index(
+            model.num_sources, residual_source_index
+        )
 
     def forward(self, audio: torch.Tensor) -> torch.Tensor:
         # The underlying model is designed around segment-based processing.
@@ -646,7 +800,81 @@ class HSTasNetONNXWrapper(nn.Module):
             auto_causal_pad=True,
             auto_curtail_length_to_multiple=False,
         )
+        if self.residual_source_index is not None:
+            separated = route_mixture_residual(
+                separated,
+                audio,
+                residual_source_index=self.residual_source_index,
+            )
         return separated
+
+
+class HSTasNetStreamingONNXWrapper(nn.Module):
+    """Explicit-state, one-hop c91 streaming contract for ONNX Runtime.
+
+    The emitted chunk is aligned with ``past_audio``. Initialize every state input
+    to zero, then feed one final zero audio chunk to flush the last real chunk.
+    """
+
+    def __init__(
+        self,
+        model: HSTasNet,
+        *,
+        residual_source_index: int | None = DEFAULT_RESIDUAL_SOURCE_INDEX,
+    ):
+        super().__init__()
+        if bool(model.use_branch_rnns):
+            raise ValueError("streaming wrapper requires c91 branch RNNs to be disabled")
+        if not isinstance(model.fusion_branch, OneFrameGRUForONNX):
+            raise ValueError("streaming wrapper requires the exportable one-frame GRU")
+        self.model = model
+        self.residual_source_index = resolve_residual_source_index(
+            model.num_sources, residual_source_index
+        )
+
+    def forward(
+        self,
+        audio_chunk: torch.Tensor,
+        past_audio: torch.Tensor,
+        overlap_add_buffer: torch.Tensor,
+        fusion_hidden: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        full_chunk = torch.cat((past_audio, audio_chunk), dim=-1)
+        window_output, next_hiddens = self.model(
+            full_chunk,
+            hiddens=(None, None, fusion_hidden, None, None),
+            auto_causal_pad=False,
+            auto_curtail_length_to_multiple=False,
+            is_streaming=True,
+        )
+        overlap = overlap_add_buffer + window_output
+        chunk_samples = int(self.model.overlap_len)
+        separated_chunk = overlap[..., :chunk_samples]
+        next_overlap_add_buffer = torch.cat(
+            (
+                overlap[..., chunk_samples:],
+                torch.zeros_like(separated_chunk),
+            ),
+            dim=-1,
+        )
+        if self.residual_source_index is not None:
+            separated_chunk = route_mixture_residual(
+                separated_chunk,
+                past_audio,
+                residual_source_index=self.residual_source_index,
+            )
+
+        next_fusion_hidden = next_hiddens[2]
+        if next_fusion_hidden is None:
+            raise RuntimeError("c91 fusion GRU did not return its next hidden state")
+        # Clone prevents torch.export from alias-renaming the audio input as an output.
+        next_past_audio = audio_chunk.clone()
+        return (
+            separated_chunk,
+            next_past_audio,
+            next_overlap_add_buffer,
+            next_fusion_hidden,
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -756,7 +984,12 @@ def export_onnx(
     device: torch.device = torch.device("cpu"),
     external_data: bool = True,
     overlap_len: int | None = None,
+    mode: str = "offline",
+    residual_source_index: int | None = DEFAULT_RESIDUAL_SOURCE_INDEX,
+    offline_samples: int | None = None,
 ) -> Path:
+    if mode not in {"offline", "streaming"}:
+        raise ValueError(f"unsupported ONNX export mode: {mode!r}")
     model = load_model(ckpt_path, device)
     model.eval()
 
@@ -769,20 +1002,85 @@ def export_onnx(
         )
         override_overlap_len_for_export(model, int(overlap_len))
 
-    model = patch_model_for_onnx(model)
-    wrapped = HSTasNetONNXWrapper(model).eval()
+    streaming = mode == "streaming"
+    model = patch_model_for_onnx(model, streaming=streaming)
 
     channels = 2 if model.stereo else 1
-    dummy_len = int(model.segment_len)
-    dummy_audio = torch.randn(1, channels, dummy_len, device=device)
+    if streaming:
+        if int(model.segment_len) != 2 * int(model.overlap_len):
+            raise ValueError(
+                "streaming export requires segment_len == 2 * overlap_len"
+            )
+        wrapped: nn.Module = HSTasNetStreamingONNXWrapper(
+            model,
+            residual_source_index=residual_source_index,
+        ).eval()
+        fusion = model.fusion_branch
+        if not isinstance(fusion, OneFrameGRUForONNX):
+            raise AssertionError("streaming fusion GRU replacement was not installed")
+        chunk_samples = int(model.overlap_len)
+        dummy_audio = torch.randn(1, channels, chunk_samples, device=device)
+        dummy_past_audio = torch.zeros_like(dummy_audio)
+        dummy_overlap = torch.zeros(
+            1,
+            int(model.num_sources),
+            channels,
+            int(model.segment_len),
+            device=device,
+        )
+        dummy_hidden = torch.zeros(
+            fusion.num_layers,
+            1,
+            fusion.hidden_size,
+            device=device,
+        )
+        export_args = (
+            dummy_audio,
+            dummy_past_audio,
+            dummy_overlap,
+            dummy_hidden,
+        )
+        input_names = [
+            "audio_chunk",
+            "past_audio",
+            "overlap_add_buffer",
+            "fusion_hidden",
+        ]
+        output_names = [
+            "separated_chunk",
+            "next_past_audio",
+            "next_overlap_add_buffer",
+            "next_fusion_hidden",
+        ]
+        dynamic_axes = None
+        dynamo = True
+    else:
+        wrapped = HSTasNetONNXWrapper(
+            model,
+            residual_source_index=residual_source_index,
+        ).eval()
+        dummy_len = int(model.segment_len) if offline_samples is None else int(offline_samples)
+        if dummy_len <= 0 or dummy_len % int(model.segment_len) != 0:
+            raise ValueError(
+                "offline sample count must be a positive multiple of segment_len"
+            )
+        dummy_audio = torch.randn(1, channels, dummy_len, device=device)
+        if not isinstance(model.stft, ConvSTFTForONNX):
+            raise AssertionError("offline STFT replacement was not installed")
+        padded_samples = dummy_len + 2 * int(model.causal_pad)
+        model.stft.fixed_inverse_frames = (
+            padded_samples - int(model.stft.win_length)
+        ) // int(model.stft.hop_length) + 1
+        export_args = (dummy_audio,)
+        input_names = ["audio"]
+        output_names = ["separated"]
+        # Keep the offline graph fixed-length. ONNX Col2Im cannot represent this
+        # model's dynamically computed overlap-add output size at opset 18.
+        dynamic_axes = None
+        dynamo = False
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # NOTE: dynamic_shapes currently results in a fixed-length export for this model
-    # with the torch.export-based path. dynamic_axes produces the desired dynamic
-    # sample dimension, so we keep it (and silence the exporter warning).
-    dynamic_axes = {"audio": {2: "samples"}, "separated": {3: "samples"}}
 
     with onnx_export_patches():
         with warnings.catch_warnings():
@@ -793,14 +1091,14 @@ def export_onnx(
             )
             torch.onnx.export(
                 wrapped,
-                (dummy_audio,),
+                export_args,
                 str(output_path),
                 opset_version=opset_version,
-                input_names=["audio"],
-                output_names=["separated"],
+                input_names=input_names,
+                output_names=output_names,
                 dynamic_axes=dynamic_axes,
                 external_data=external_data,
-                dynamo=True,
+                dynamo=dynamo,
             )
 
     # Embed provenance metadata for traceability.
@@ -811,7 +1109,8 @@ def export_onnx(
         "hs_tasnet.export_script": Path(__file__).name,
         "hs_tasnet.opset_version": str(opset_version),
         "hs_tasnet.external_data": "true" if external_data else "false",
-        "hs_tasnet.export.dynamo": "true",
+        "hs_tasnet.export.mode": mode,
+        "hs_tasnet.export.dynamo": "true" if dynamo else "false",
         "hs_tasnet.torch_version": str(getattr(torch, "__version__", "")),
         "hs_tasnet.model.segment_len": str(int(getattr(model, "segment_len", 0))),
         "hs_tasnet.model.overlap_len": str(int(getattr(model, "overlap_len", 0))),
@@ -822,9 +1121,61 @@ def export_onnx(
         "hs_tasnet.model.spec_branch_use_phase": (
             "true" if bool(getattr(model, "spec_branch_use_phase", False)) else "false"
         ),
-        "hs_tasnet.export.auto_causal_pad": "true",
+        "hs_tasnet.model.use_branch_rnns": (
+            "true" if bool(getattr(model, "use_branch_rnns", False)) else "false"
+        ),
+        "hs_tasnet.model.decoder_hann_baked": (
+            "true"
+            if bool(getattr(model.conv_decode, "hann_window_baked", False))
+            else "false"
+        ),
+        "hs_tasnet.model.output_source_scales": json.dumps(
+            [
+                float(value)
+                for value in (
+                    model.output_source_scales.detach().cpu().tolist()
+                    if isinstance(model.output_source_scales, torch.Tensor)
+                    else []
+                )
+            ],
+            separators=(",", ":"),
+        ),
+        "hs_tasnet.export.mixture_consistency": (
+            "route_residual" if residual_source_index is not None else "disabled"
+        ),
+        "hs_tasnet.export.residual_source_index": (
+            str(resolve_residual_source_index(model.num_sources, residual_source_index))
+            if residual_source_index is not None
+            else ""
+        ),
+        "hs_tasnet.export.auto_causal_pad": "false" if streaming else "true",
         "hs_tasnet.export.auto_curtail_length_to_multiple": "false",
+        "hs_tasnet.export.input_names": json.dumps(input_names, separators=(",", ":")),
+        "hs_tasnet.export.output_names": json.dumps(output_names, separators=(",", ":")),
     }
+    if streaming:
+        props.update(
+            {
+                "hs_tasnet.streaming.chunk_samples": str(int(model.overlap_len)),
+                "hs_tasnet.streaming.analysis_window_samples": str(
+                    int(model.segment_len)
+                ),
+                "hs_tasnet.streaming.output_alignment": "previous_input_chunk",
+                "hs_tasnet.streaming.output_delay_hops": "1",
+                "hs_tasnet.streaming.initial_state": "all_zeros",
+                "hs_tasnet.streaming.preroll": "discard_first_output_chunk",
+                "hs_tasnet.streaming.flush": "append_one_zero_audio_chunk",
+                "hs_tasnet.streaming.fusion_hidden_shape": json.dumps(
+                    [fusion.num_layers, 1, fusion.hidden_size], separators=(",", ":")
+                ),
+                "hs_tasnet.streaming.overlap_add_buffer_shape": json.dumps(
+                    [1, model.num_sources, channels, model.segment_len],
+                    separators=(",", ":"),
+                ),
+            }
+        )
+    else:
+        props["hs_tasnet.offline.input_samples"] = str(dummy_len)
 
     try:
         props["hs_tasnet.export_script_sha256"] = _sha256_file(Path(__file__))
@@ -833,21 +1184,42 @@ def export_onnx(
 
     _write_onnx_metadata(output_path, props)
 
-    _validate_onnx(output_path)
+    _validate_onnx(
+        output_path,
+        expected_inputs=input_names,
+        expected_outputs=output_names,
+    )
     return output_path
 
 
-def _validate_onnx(path: Path) -> None:
+def _validate_onnx(
+    path: Path,
+    *,
+    expected_inputs: list[str],
+    expected_outputs: list[str],
+) -> None:
     try:
         import onnx
+    except ImportError as error:
+        raise RuntimeError("onnx is required to validate an exported model") from error
 
+    try:
         # Pass the file path so external-data models can be resolved relative to it.
         onnx.checker.check_model(str(path))
+        graph = onnx.load_model(str(path), load_external_data=False).graph
+        actual_inputs = [value.name for value in graph.input]
+        actual_outputs = [value.name for value in graph.output]
+        if actual_inputs != expected_inputs:
+            raise ValueError(
+                f"ONNX input contract changed: {actual_inputs} != {expected_inputs}"
+            )
+        if actual_outputs != expected_outputs:
+            raise ValueError(
+                f"ONNX output contract changed: {actual_outputs} != {expected_outputs}"
+            )
         logger.info("ONNX validation passed: %s", path)
-    except ImportError:
-        logger.warning("onnx not installed; skipping validation")
-    except Exception as e:
-        logger.warning("ONNX validation warning for %s: %s", path, e)
+    except Exception as error:
+        raise RuntimeError(f"ONNX validation failed for {path}: {error}") from error
 
 
 # -----------------------------------------------------------------------------
@@ -860,6 +1232,28 @@ def main() -> None:
     parser.add_argument("checkpoint", type=str, help="Path to the checkpoint (.pt)")
     parser.add_argument("--output", "-o", type=str, default=None, help="Output .onnx path")
     parser.add_argument("--opset", type=int, default=18, help="ONNX opset version (default: 18)")
+    parser.add_argument(
+        "--mode",
+        choices=("offline", "streaming"),
+        default="offline",
+        help="Export a fixed-length offline graph or the explicit-state c91 streaming graph",
+    )
+    parser.add_argument(
+        "--residual-source-index",
+        type=int,
+        default=None,
+        help=(
+            "Route the mixture reconstruction residual to this source index. "
+            "For c91 source order [drums,bass,vocals,other], use 3 to make the "
+            "deployment mixture-consistent. Disabled unless explicitly supplied."
+        ),
+    )
+    parser.add_argument(
+        "--offline-samples",
+        type=int,
+        default=None,
+        help="Fixed input sample count for offline export; must be a segment_len multiple",
+    )
     parser.add_argument(
         "--overlap-len",
         type=int,
@@ -899,6 +1293,9 @@ def main() -> None:
         device=device,
         external_data=external_data,
         overlap_len=args.overlap_len,
+        mode=args.mode,
+        residual_source_index=args.residual_source_index,
+        offline_samples=args.offline_samples,
     )
     print(f"ONNX model saved to: {output_path}")
 

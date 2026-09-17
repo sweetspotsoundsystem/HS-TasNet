@@ -61,6 +61,7 @@ test = [
 ]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 pythonpath = [
     "."
 ]
@@ -86,6 +87,14 @@ include = [
     "LICENSE",
     "pyproject.toml",
     "docs/streaming-training.md",
+    "docs/current-training.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "research",
+    "export_onnx.py",
+    "scripts/sync_research.py",
+    "tests/test_current_research.py",
+    "tests/test_export_onnx.py",
     "configs",
     "train_streaming.py",
     "scripts/build_streaming_manifest.py",

@@ -42,7 +42,18 @@ thread and the same KleidiAI-disabled setting as the plugin. The user reports
 zero fallback in their M4 plugin test. Weights are not included in the Python
 wheel.
 
-## Trainable streaming baseline
+## Current model training
+
+The current eight-state native model, training loop, data augmentation,
+weighted losses, Adam/EMA recovery, evaluation, monitoring and integer export
+code are included in `research/direct`. The production corpus helpers and
+active frozen recipe are included as well. The [current training guide](docs/current-training.md)
+maps the implementation and documents the original run's environment and
+checkpoint requirements. CI checks the native/released state contract,
+gradients, lossless restore and export parity. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the source sync required with every model update.
+
+## Earlier four-state training baseline
 
 `StreamingHSTasNet` retains the earlier four-state FP32 architecture and its
 exact weight importer. Download that model with `--variant trainable`, then

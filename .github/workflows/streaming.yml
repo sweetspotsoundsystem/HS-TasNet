@@ -49,3 +49,29 @@ jobs:
           python scripts/import_streaming_weights.py
       - name: Check model, loss, exact Adam resume and ONNX export
         run: python -m pytest tests/test_streaming_model.py tests/test_streaming_training.py tests/test_streaming_export.py -q
+
+  current-training:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CUDA_VISIBLE_DEVICES: ''
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install current model and export dependencies on CPU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libportaudio2
+          python -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e '.[streaming,onnx,test]' numpy==2.2.6 onnx==1.19.1 torchcodec==0.6.0
+      - name: Verify full source snapshot and download the current release
+        run: |
+          python scripts/sync_research.py
+          python scripts/download_streaming_model.py
+      - name: Check current architecture, gradients, exact packed recovery and export
+        run: python -m pytest tests/test_current_research.py tests/test_export_onnx.py -q

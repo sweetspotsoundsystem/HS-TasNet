@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "corpus_id": "hs-tasnet-c91-full-v1",
+  "sample_rate": 44100,
+  "channels": 2,
+  "source_order": [
+    "drums",
+    "bass",
+    "vocals",
+    "other"
+  ],
+  "vocal_activity": {
+    "block_frames": 44100,
+    "mean_square_floor_int16": 1073742,
+    "comparison": ">",
+    "partial_final_second": "excluded"
+  },
+  "roots": [
+    {
+      "root_id": "musdb18hq_train",
+      "path": "/home/axel/HS-TasNet/data/musdb18hq/train",
+      "expected_track_count": 83,
+      "sample_weight": 0.5,
+      "selection": {
+        "kind": "names_from_manifest",
+        "manifest": "/home/axel/autoresearch/codex/HS-TasNet/research/manifests/train.json"
+      }
+    },
+    {
+      "root_id": "moisesdb_train",
+      "path": "/home/axel/autoresearch/claude/HS-TasNet/data/moisesdb/train",
+      "expected_input_track_count": 219,
+      "expected_track_count": 218,
+      "sample_weight": 0.25,
+      "selection": {
+        "kind": "all_directories"
+      },
+      "exact_duplicate_exclusions": [
+        {
+          "excluded_name": "Firefly - Up Close And Personal",
+          "retained_name": "Firefly - The Long Way",
+          "reason": "all five audio files are byte-identical",
+          "file_sha256": {
+            "mixture": "2bd23bdecaa645c449d4d2b36f44238306ccd989a0549f7897953eb40ac23ba1",
+            "drums": "ad12f8d29a98a03940650d488f69d27b495258b9a38748c9b9cb72d5210d0192",
+            "bass": "a5b7c58c1f32894432ac01772156ce8b6187236d34eccaa04e03f24a1f60cdaf",
+            "vocals": "8858d7df95cb555bfd937647ea98d03a0904a4a7558da7e02f58b2942204da42",
+            "other": "cd29bd42067bff43234e0603bba90478060cf832cba3d94040212bfdb490cf05"
+          }
+        }
+      ]
+    },
+    {
+      "root_id": "recordpool_best200_v1",
+      "path": "/home/axel/autoresearch/datasets/hs-tasnet-recordpool-best200-v1/tracks",
+      "expected_track_count": 200,
+      "sample_weight": 0.25,
+      "selection": {
+        "kind": "recordpool_selection",
+        "manifest": "/home/axel/autoresearch/datasets/hs-tasnet-recordpool-best200-v1/selection.json",
+        "validation": "/home/axel/autoresearch/datasets/hs-tasnet-recordpool-best200-v1/validation.json"
+      }
+    }
+  ],
+  "exclusion_evidence": {
+    "musdb_validation_manifest": "/home/axel/autoresearch/codex/HS-TasNet/research/manifests/valid.json",
+    "musdb_test_manifest": "/home/axel/autoresearch/codex/HS-TasNet/research/manifests/test.json",
+    "recordpool_holdout_ids": "/home/axel/autoresearch/claude/HS-TasNet/research/recordpool_holdout.txt"
+  },
+  "fingerprint_evidence": {
+    "path": "/home/axel/autoresearch/datasets/hs-tasnet-recordpool-best200-v1/work/reference_fingerprints.json",
+    "reference_prefixes": {
+      "musdb_valid/": 14,
+      "musdb_test/": 46,
+      "recordpool_holdout_export/": 12
+    }
+  }
+}

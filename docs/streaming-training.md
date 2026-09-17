@@ -1,5 +1,8 @@
 # Training the four-state FP32 streaming baseline
 
+For the current eight-state implementation and its complete research training,
+recovery and evaluation source, use the [current training guide](current-training.md).
+
 `hs_tasnet.streaming_model.StreamingHSTasNet` implements the earlier stereo
 44.1 kHz network: 1024-sample asymmetric spectral analysis, a learned waveform
 branch, a two-layer GRU, 256-sample synthesis and a 128-sample hop. It has 21

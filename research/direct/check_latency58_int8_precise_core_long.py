@@ -1,0 +1,113 @@
+"""Measure long precise-core integer trajectories at unchanged qualification tolerances."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import time
+
+from research.direct.run_latency58_quality import ROOT, PHASE, read, write, sha, require
+
+
+def main():
+    import numpy as np
+    import onnx
+    import onnxruntime as ort
+    import soundfile as sf
+    import torch
+    from research.direct.latency58_asymmetric import Latency58AsymmetricModel
+    from research.direct.latency58_residual_model import load_checkpoint, BASE_STATE
+    from research.direct.latency58_asymmetric_onnx import INPUT_NAMES, OUTPUT_NAMES, _initial_states, verification_cases, TOLERANCES
+    from research.direct.latency58_int8_precise_core import make_reference, rewrite
+    from research.direct.check_latency58_fused_gru import session_for
+    from research.direct.train_latency58 import state_sha256, verify_inputs
+    from research.direct.latency58_sdr_checkpoint import require_space
+    require(Path.cwd() == ROOT and os.environ.get("CUDA_VISIBLE_DEVICES") == "" and ort.__version__ == "1.26.0",
+            "Require CPU and shipping runtime")
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+    torch.use_deterministic_algorithms(True)
+    source_path = PHASE / "full-magnitude-sdr-001/plan.json"
+    source = read(source_path)
+    closed = read(source_path.parent / "production-stage/execution.json")
+    saved = read(source_path.parent / "production-run/result.json")
+    require(closed["actual_exit_code"] == 0 and saved["checkpoint_written"] and saved["updates"] == 2000, "Training save is still pending")
+    require_space(source, 5_000_000)
+    graph_binding = read(PHASE / "m4-int8-screen-002/result.json")["quantized"]
+    require(sha(graph_binding["path"]) == graph_binding["sha256"], "Integer artifact changed")
+    parent_binding = read(PHASE / "full-magnitude-001/plan.json")["parent_checkpoint"]
+    parent, _ = load_checkpoint(parent_binding["path"], parent_binding["sha256"])
+    native = Latency58AsymmetricModel()
+    native.load_state_dict({key: value for key, value in parent.state_dict().items() if key != "fixed_residual_share"}, strict=True)
+    native.eval().requires_grad_(False)
+    require(state_sha256(native.state_dict()) == BASE_STATE, "Wrong original FP32 source")
+    original_graph = onnx.load(graph_binding["path"], load_external_data=False)
+    reference, _ = make_reference(native, original_graph)
+    import copy
+    candidate_bytes = rewrite(copy.deepcopy(original_graph)).SerializeToString()
+    screen_path = PHASE / "m4-int8-precise-core-001/result.json"
+    screen = read(screen_path)
+    require(screen["strict_parity_passed"] and hashlib.sha256(candidate_bytes).hexdigest() == screen["graph_sha256"], "Graph differs from the completed screen")
+    session = session_for(candidate_bytes)
+    music_path = Path("/home/axel/HS-TasNet/data/musdb18hq/train/Actions - One Minute Smile/mixture.wav")
+    music, rate = sf.read(music_path, frames=30 * 44100 + 37, always_2d=True, dtype="float32")
+    require(rate == 44100 and music.shape == (30 * 44100 + 37, 2), "Music excerpt differs")
+    cases = [next(verification_cases(1024, [])),
+             {"name": "recorded_music_30_seconds", "audio": np.ascontiguousarray(music.T), "initial_states": _initial_states()}]
+    out = PHASE / "m4-int8-precise-core-long-001"
+    require(not out.exists(), "Preserve long diagnostics")
+    out.mkdir()
+    paths = [source_path, Path(__file__).resolve(), ROOT / "research/direct/latency58_int8_reference.py", ROOT / "research/direct/latency58_int8_precise_float.py", ROOT / "research/direct/latency58_int8_precise_core.py",
+             source_path.parent / "production-stage/execution.json", source_path.parent / "production-run/result.json",
+             screen_path, screen_path.parent / "plan.json",
+             Path(graph_binding["path"]), music_path]
+    bindings = {**source["source_bindings"], **{str(path): sha(path) for path in paths}}
+    write(out / "plan.json", {"source_bindings": bindings, "parent_graph": graph_binding, "graph_sha256": screen["graph_sha256"], "graph_saved": False, "ort_version": ort.__version__,
+          "scope": "Independent long trajectory diagnostic; no qualification-tolerance changes", "audio_written": False})
+    rows, began = [], time.monotonic()
+    with torch.inference_mode():
+        for case in cases:
+            count = case["audio"].shape[-1]
+            padded = np.pad(case["audio"], ((0, 0), (0, (-count) % 128 + 128)))
+            states = [value.copy() for value in case["initial_states"]]
+            torch_states = [torch.from_numpy(value.copy()) for value in states]
+            previous = states[0][0, :, -128:].copy()
+            maximum = np.zeros(5)
+            maximum_rms, closure = 0., 0.
+            energy, error = np.zeros(4), np.zeros(4)
+            digest = hashlib.sha256()
+            for hop, offset in enumerate(range(0, padded.shape[-1], 128), start=1):
+                chunk = np.ascontiguousarray(padded[None, :, offset:offset + 128])
+                expected = [value.numpy() for value in reference(torch.from_numpy(chunk), *torch_states)]
+                actual = session.run(list(OUTPUT_NAMES), dict(zip(INPUT_NAMES, [chunk, *states], strict=True)))
+                require(all(np.isfinite(value).all() for value in [*actual, *expected]), "Nonfinite output/state")
+                for index, (left, right) in enumerate(zip(expected, actual, strict=True)):
+                    maximum[index] = max(maximum[index], float(np.abs(left - right).max()) * (2**18 if index == 2 else 1))
+                difference = actual[0].astype(np.float64) - expected[0]
+                maximum_rms = max(maximum_rms, float(np.sqrt(np.mean(difference ** 2, axis=-1)).max()))
+                energy += np.square(expected[0].astype(np.float64)).sum(axis=(0, 2, 3))
+                error += np.square(difference).sum(axis=(0, 2, 3))
+                closure = max(closure, *(float(np.abs(value[0].sum(axis=0) - previous).max()) for value in (expected[0], actual[0])))
+                digest.update(actual[0].tobytes())
+                states, torch_states = actual[1:], [torch.from_numpy(value) for value in expected[1:]]
+                previous = chunk[0].copy()
+                if hop % 1000 == 0:
+                    print(json.dumps({"case": case["name"], "hops": hop, "maximum_waveform_error": maximum[0],
+                                      "maximum_physical_hidden_error": maximum[2]}), flush=True)
+            row = {"case": case["name"], "samples": count, "calls": padded.shape[-1] // 128,
+                   "maximum_errors_in_physical_units": dict(zip(OUTPUT_NAMES, maximum.tolist(), strict=True)),
+                   "maximum_callback_stem_rms": maximum_rms, "maximum_closure": closure,
+                   "per_stem_reference_to_difference_snr_db": (10 * np.log10(np.maximum(energy, 1e-30) / np.maximum(error, 1e-30))).tolist(),
+                   "runtime_audio_trajectory_sha256": digest.hexdigest(),
+                   "existing_strict_tolerances_passed": bool(maximum[0] <= TOLERANCES["waveform_max_abs"] and
+                     maximum[1:].max() <= TOLERANCES["state_max_abs_decoded_units"] and maximum_rms <= TOLERANCES["stem_callback_rms"])}
+            rows.append(row)
+            write(out / f"case-{len(rows)}.json", row)
+            print(json.dumps(row), flush=True)
+    verify_inputs({"source_bindings": bindings})
+    write(out / "result.json", {"status": "diagnostic_complete", "cases": rows,
+          "source_bindings_unchanged": True, "native_host_qualified": False, "plugin_modified": False,
+          "elapsed_seconds": time.monotonic() - began, "counted_bytes_after": require_space(source, 5_000_000)})
+
+
+if __name__ == "__main__":
+    main()

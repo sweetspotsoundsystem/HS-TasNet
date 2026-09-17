@@ -1,0 +1,22 @@
+{
+  "schema": "latency58-four-second-additional-artifact-allocation-v1",
+  "created_utc": "2026-09-16T10:45:24.073401+00:00",
+  "authorized_cap_bytes": 100000000000,
+  "authorization": "Existing user instruction on 2026-09-16 grants another 10 GB; total 100 GB.",
+  "new_root": "/home/axel/autoresearch/codex/HS-TasNet/research/four_second_20260916",
+  "reserved_peak_bytes": 2500000000,
+  "planning_components": {
+    "one_final_or_rolling_generation_bytes": 500000000,
+    "transient_save_and_checkpoint_qualification_bytes": 800000000,
+    "monitor_evaluation_and_scalar_artifacts_bytes": 1200000000
+  },
+  "accounting": "Add the complete disjoint 2.5 GB allocation to the frozen 014 forecast plus complete 4 GB M4 allocation. Keep all prior checkpoints, external Git and outside-root reserves.",
+  "scientific_decision": {
+    "path": "/home/axel/autoresearch/codex/HS-TasNet/research/direct/runs/latency58/weighted-vocal-review-014/next-experiment-decision.json",
+    "sha256": "2d518bb6067914779e8adcd1903f53c6d52a361b44352093cf890f618a4e295c"
+  },
+  "source_bindings": {
+    "/home/axel/autoresearch/codex/HS-TasNet/research/direct/latency58_four_second_storage.py": "5bdfd556c2dcddb0368fadba98624205414d363123bc7321a1a7b35c55553ea6"
+  },
+  "production_qualified": false
+}

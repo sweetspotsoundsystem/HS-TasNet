@@ -218,21 +218,44 @@ class ConvTranspose1DWithHannWindow(ConvTranspose1d):
         dim,
         dim_out,
         filters,
+        hann_window_baked = False,
         **kwargs
     ):
         super().__init__(dim, dim_out, filters, **kwargs)
 
+        assert isinstance(hann_window_baked, bool)
+        self.hann_window_baked = hann_window_baked
         self.register_buffer('window', hann_window(filters))
 
-    def forward(self, x):
+    @torch.no_grad()
+    def bake_hann_window_(self):
+        if self.hann_window_baked:
+            raise RuntimeError('decoder Hann window was already baked')
+        self.weight.mul_(self.window)
+        self.hann_window_baked = True
+
+    def forward(self, x, is_streaming = False):
 
         filters = self.weight
 
-        windowed_filters = multiply('o i k, k', filters, self.window)
+        if not self.hann_window_baked:
+            filters = multiply('o i k, k', filters, self.window)
+
+        if is_streaming and self.hann_window_baked and x.shape[-1] == 1:
+            decoded = F.linear(
+                x[..., 0],
+                filters.flatten(1).t(),
+                bias = None
+            )
+            return decoded.view(
+                x.shape[0],
+                self.out_channels,
+                self.kernel_size[0]
+            )
 
         return F.conv_transpose1d(
             x,
-            windowed_filters,
+            filters,
             stride = self.stride,
             padding = self.padding
         )
@@ -254,6 +277,9 @@ class HSTasNet(Module):
         num_sources = 4,      # drums, bass, vocals, other
         torch_compile = False,
         use_gru = False,
+        use_branch_rnns = True,
+        residual_source_softmax = False,
+        decoder_hann_baked = False,
         rnn_klass: Callable[..., Module] | None = None,
         spec_branch_use_phase = True,
         norm_before_mask_estimate = True # for some reason, training is unstable without a norm - improvise by adding an RMSNorm before final projection
@@ -273,6 +299,18 @@ class HSTasNet(Module):
 
         self.audio_channels = audio_channels
         self.num_sources = num_sources
+        assert isinstance(residual_source_softmax, bool)
+        self.residual_source_softmax = residual_source_softmax
+        assert isinstance(decoder_hann_baked, bool)
+        if residual_source_softmax:
+            output_source_scales = torch.full(
+                (num_sources,),
+                0.5,
+                dtype = torch.float32
+            )
+        else:
+            output_source_scales = None
+        self.register_buffer('output_source_scales', output_source_scales)
 
         assert overlap_len < segment_len
 
@@ -331,7 +369,13 @@ class HSTasNet(Module):
             Rearrange('... (t basis) -> ... basis t', t = num_sources)
         )
 
-        self.conv_decode = ConvTranspose1DWithHannWindow(num_basis, audio_channels, segment_len, stride = overlap_len)
+        self.conv_decode = ConvTranspose1DWithHannWindow(
+            num_basis,
+            audio_channels,
+            segment_len,
+            stride = overlap_len,
+            hann_window_baked = decoder_hann_baked
+        )
 
         # init mask to identity
 
@@ -350,15 +394,25 @@ class HSTasNet(Module):
 
         rnn_klass = default(rnn_klass, LSTM if not use_gru else GRU)
 
-        self.pre_spec_branch = rnn_klass(dim, dim, lstm_num_layers)
-        self.post_spec_branch = rnn_klass(dim, dim, lstm_num_layers)
+        self.use_branch_rnns = use_branch_rnns
+
+        if use_branch_rnns:
+            self.pre_spec_branch = rnn_klass(dim, dim, lstm_num_layers)
+            self.post_spec_branch = rnn_klass(dim, dim, lstm_num_layers)
+        else:
+            self.pre_spec_branch = None
+            self.post_spec_branch = None
 
         dim_fusion = dim * (2 if not small else 1)
 
         self.fusion_branch = rnn_klass(dim_fusion, dim_fusion, lstm_num_layers)
 
-        self.pre_waveform_branch = rnn_klass(dim, dim, lstm_num_layers)
-        self.post_waveform_branch = rnn_klass(dim, dim, lstm_num_layers)
+        if use_branch_rnns:
+            self.pre_waveform_branch = rnn_klass(dim, dim, lstm_num_layers)
+            self.post_waveform_branch = rnn_klass(dim, dim, lstm_num_layers)
+        else:
+            self.pre_waveform_branch = None
+            self.post_waveform_branch = None
 
         # torch compile forward
 
@@ -372,6 +426,39 @@ class HSTasNet(Module):
     @property
     def num_parameters(self):
         return sum([p.numel() for p in self.parameters()])
+
+    def apply_residual_source_softmax(self, masks: Tensor):
+        if not self.residual_source_softmax:
+            return masks
+        competitive = torch.softmax(masks, dim = -1)
+        return masks.add_(competitive, alpha = float(self.num_sources))
+
+    @torch.no_grad()
+    def set_output_source_gains(self, gains: Tensor):
+        assert exists(self.output_source_scales)
+        gains = torch.as_tensor(
+            gains,
+            device = self.output_source_scales.device,
+            dtype = self.output_source_scales.dtype
+        )
+        assert gains.shape == (self.num_sources,)
+        assert torch.isfinite(gains).all()
+        assert (gains > 0.).all()
+        self.output_source_scales.copy_(0.5 * gains)
+
+    @torch.no_grad()
+    def bake_decoder_hann_window_(self):
+        """Persist effective decoder filters for single-frame deployment."""
+
+        config = pickle.loads(self._config)
+        if config.get('decoder_hann_baked', False):
+            raise RuntimeError('decoder Hann window config was already baked')
+        if self.conv_decode.hann_window_baked:
+            raise RuntimeError('decoder Hann window module was already baked')
+
+        self.conv_decode.bake_hann_window_()
+        config['decoder_hann_baked'] = True
+        self._config = pickle.dumps(config)
 
     # get a spectrogram figure based on hparams of the model
 
@@ -780,9 +867,13 @@ class HSTasNet(Module):
 
         spec_residual, waveform_residual = spec, waveform
 
-        spec, next_pre_spec_hidden = maybe_residual(self.pre_spec_branch)(spec, pre_spec_hidden)
+        if self.use_branch_rnns:
+            spec, next_pre_spec_hidden = maybe_residual(self.pre_spec_branch)(spec, pre_spec_hidden)
 
-        waveform, next_pre_waveform_hidden = maybe_residual(self.pre_waveform_branch)(waveform, pre_waveform_hidden)
+            waveform, next_pre_waveform_hidden = maybe_residual(self.pre_waveform_branch)(waveform, pre_waveform_hidden)
+        else:
+            assert not exists(pre_spec_hidden) and not exists(pre_waveform_hidden)
+            next_pre_spec_hidden = next_pre_waveform_hidden = None
 
         # if small, they just sum the two branches
 
@@ -810,13 +901,18 @@ class HSTasNet(Module):
 
         # layer for both branches
 
-        spec, next_post_spec_hidden = maybe_residual(self.post_spec_branch)(spec, post_spec_hidden)
+        if self.use_branch_rnns:
+            spec, next_post_spec_hidden = maybe_residual(self.post_spec_branch)(spec, post_spec_hidden)
 
-        waveform, next_post_waveform_hidden = maybe_residual(self.post_waveform_branch)(waveform, post_waveform_hidden)
+            waveform, next_post_waveform_hidden = maybe_residual(self.post_waveform_branch)(waveform, post_waveform_hidden)
+        else:
+            assert not exists(post_spec_hidden) and not exists(post_waveform_hidden)
+            next_post_spec_hidden = next_post_waveform_hidden = None
 
         # spec mask
 
         spec_mask = self.to_spec_masks(spec)
+        spec_mask = self.apply_residual_source_softmax(spec_mask)
 
         if self.spec_branch_use_phase:
 
@@ -842,16 +938,22 @@ class HSTasNet(Module):
         # waveform mask
 
         waveform_mask = self.to_waveform_masks(waveform)
+        waveform_mask = self.apply_residual_source_softmax(waveform_mask)
 
         basis_per_source = multiply('b basis n, b n basis t -> (b t) basis n', basis, waveform_mask)
 
-        recon_audio_from_waveform = self.conv_decode(basis_per_source)
+        recon_audio_from_waveform = self.conv_decode(
+            basis_per_source,
+            is_streaming = is_streaming
+        )
 
         recon_audio_from_waveform = rearrange(recon_audio_from_waveform, '(b t) ... -> b t ...', b = batch)
 
         # recon audio
 
         recon_audio = recon_audio_from_spec + recon_audio_from_waveform
+        if exists(self.output_source_scales):
+            recon_audio.mul_(self.output_source_scales[None, :, None, None])
 
         # take care of l1 loss if target is passed in
 

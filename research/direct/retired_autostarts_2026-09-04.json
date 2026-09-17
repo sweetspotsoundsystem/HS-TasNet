@@ -1,0 +1,348 @@
+{
+  "reason": "User retired old HS-TasNet automatic research on 2026-09-04 in favor of direct experiments",
+  "action": "Disable historical autostarts only; preserve unit files, artifacts, and currently active swap",
+  "before": [
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c126-v5-recovery-successor-v1.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c126-v5-recovery-successor-v1.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c126-v5-recovery-successor-v1.service",
+      "unit_sha256": "b5b713cb8166a7c4a5eafe7152cf2a1c9eef368a5b04a345bf8a7b3e1ea2f80c",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet sealed c126 v5 recovery successor\nDocumentation=file:/home/axel/autoresearch/codex/HS-TasNet-latency11-v1-state/workspaces/c126-v5-recovery-persistence-v1/HS-TasNet/PERSISTENCE_LAUNCH_PROPOSAL.md\nStartLimitIntervalSec=0\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/codex/HS-TasNet-latency11-v1-state/workspaces/c126-v5-recovery-supervisor-v1/HS-TasNet\nExecStart=/home/axel/miniforge3/bin/python3.12 -I -B /home/axel/autoresearch/codex/HS-TasNet-latency11-v1-state/workspaces/c126-v5-recovery-persistence-v1/HS-TasNet/tools/c126_v5_recovery_launch_guard.py run\nRestart=no\nRestartSec=60s\nRestartPreventExitStatus=20\nRestartForceExitStatus=75\nKillMode=mixed\nTimeoutStopSec=45s\nOOMPolicy=stop\nUMask=0077\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-b1-fallback.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-b1-fallback.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step200000-b1-fallback.service",
+      "unit_sha256": "1e465a92ad591f10960106681b4d5155fc93d075630cbe8a888ef2a452501ef7",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 step200000 crash-safe conditional production-B1 fallback\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/codex/HS-TasNet\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step200000/run_step200000_b1_fallback.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-capture.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-capture.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step200000-capture.service",
+      "unit_sha256": "fa9f925680d12a95cdb9c7e96c5212b49d4a3e85e1fd8be92781fd00c842db95",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 verified native step200000 capture\n\n[Service]\nType=exec\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\"\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step200000/capture_step200000.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-gate.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-gate.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step200000-gate.service",
+      "unit_sha256": "e9d060c17998d01bbff4eca6d46679fae0d0736bb6429911563585450b538b45",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 native step200000 crash-safe audit and frozen fast gate\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/codex/HS-TasNet\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step200000/run_step200000_gate.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-missing-snapshot-recovery.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-missing-snapshot-recovery.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step200000-missing-snapshot-recovery.service",
+      "unit_sha256": "5bba5b687fd7e5f1aa0ffd38e20120225e4e0fcc8aa357e4c8208c7f237f73de",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 step200000 missing-native-snapshot recovery watcher\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/codex/HS-TasNet\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step200000/recover_missing_snapshot_step200000.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-b1-fallback.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-b1-fallback.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step225000-b1-fallback.service",
+      "unit_sha256": "46b31d636ce969c8d29ec4c912bee77d85022723e13bec5ec11abe5d22552a77",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 step225000 crash-safe conditional production-B1 fallback\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/run_step225000_b1_fallback.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-capture.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-capture.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step225000-capture.service",
+      "unit_sha256": "1eccba02e72ec3ce42e8b132545427a82c36ea7d5e775faa587e588eabb8a8b7",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 verified native step225000 capture\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/capture_step225000.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-gate.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-gate.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step225000-gate.service",
+      "unit_sha256": "e5229b4f97c6b6945fc65afd6c284ca2eb5e5d88fa37ef2f56ee02d789684063",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 native step225000 crash-safe audit and frozen fast gate\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/run_step225000_gate.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-missing-snapshot-recovery.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-missing-snapshot-recovery.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step225000-missing-snapshot-recovery.service",
+      "unit_sha256": "9fb05b5133f33ae740c34074da79ff5638bdb0376022157761f235250e81c687",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 step225000 missing-native-snapshot recovery watcher\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step225000/recover_missing_snapshot_step225000.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-armer.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-armer.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step250000-armer.service",
+      "unit_sha256": "779b4fb43e204f3e33acdefe7dbaeb19121b3c898994dc7e691a2396e32c5787",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 deferred crash-safe step250000 armer\nAfter=hs-tasnet-c91-full-v1-autoresume.service\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nUMask=0077\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000 /home/axel/.config/systemd/user\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/armer-preflight.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/arm_step250_after_step225.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-b1-fallback.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-b1-fallback.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step250000-b1-fallback.service",
+      "unit_sha256": "cf34ccf56cdadfbf55ad43b76c0998a220a0feb3058ffc2a72540599203dccb3",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 step250000 crash-safe conditional production-B1 fallback\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nUMask=0077\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/run_step250000_b1_fallback.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-capture.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-capture.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step250000-capture.service",
+      "unit_sha256": "759c2f73ebbfbdde68743064903853ce9ea88a71057ca10d6eee4af675499ad3",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 verified native step250000 capture\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nUMask=0077\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/capture_step250000.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-gate.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-gate.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step250000-gate.service",
+      "unit_sha256": "f1f04caf4b312bdae1fd7024f41c67a1b06dcbf0209d3bc19bd56780cebd4a8d",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 native step250000 crash-safe audit, LR proof, and frozen fast gate\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nUMask=0077\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDONTWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/run_step250000_gate.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-missing-snapshot-recovery.service",
+      "link": "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-missing-snapshot-recovery.service",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-step250000-missing-snapshot-recovery.service",
+      "unit_sha256": "5b5b712d0e2a6fab868b10102617776d0d3838528499831b96939e03184b3034",
+      "unit_contents": "[Unit]\nDescription=HS-TasNet c91 step250000 missing-native-snapshot recovery watcher\n\n[Service]\nType=exec\nWorkingDirectory=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1\nNice=19\nIOSchedulingClass=idle\nCPUWeight=1\nIOWeight=1\nRestart=on-failure\nRestartSec=30s\nKillMode=mixed\nTimeoutStopSec=10min\nUMask=0077\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths=/home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000\nStandardOutput=journal\nStandardError=journal\nEnvironment=\"CUDA_VISIBLE_DEVICES=\" \"PYTHONDWRITEBYTECODE=1\" \"OMP_NUM_THREADS=1\" \"MKL_NUM_THREADS=1\" \"OPENBLAS_NUM_THREADS=1\" \"NUMEXPR_NUM_THREADS=1\" \"VECLIB_MAXIMUM_THREADS=1\" \"BLIS_NUM_THREADS=1\" \"CUBLAS_WORKSPACE_CONFIG=:4096:8\"\nExecStartPre=/usr/bin/sha256sum --check --strict /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/automation.sha256\nExecStart=/home/axel/miniforge3/bin/python /home/axel/autoresearch/production/hs-tasnet-c91-full-v1/diagnostics/native-gate-step250000/recover_missing_snapshot_step250000.py\n\n[Install]\nWantedBy=default.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-full-v1-final-audit.timer",
+      "link": "/home/axel/.config/systemd/user/timers.target.wants/hs-tasnet-c91-full-v1-final-audit.timer",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-full-v1-final-audit.timer",
+      "unit_sha256": "5a62b3e7c2fd9687727ba3d0cee07923ebf2cecd421e2630fe4941ee13e8538a",
+      "unit_contents": "[Unit]\nDescription=Retry completed HS-TasNet c91 final audit until a receipt exists\n\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\nAccuracySec=30s\nPersistent=true\nUnit=hs-tasnet-c91-full-v1-final-audit.service\n\n[Install]\nWantedBy=timers.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-full-v1-final-benchmarks.timer",
+      "link": "/home/axel/.config/systemd/user/timers.target.wants/hs-tasnet-c91-full-v1-final-benchmarks.timer",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-full-v1-final-benchmarks.timer",
+      "unit_sha256": "8dc5c401b1189512e8e75d735d45c5de5dd3b6c3d723ddd1ea69e171d81de555",
+      "unit_contents": "[Unit]\nDescription=Run audited HS-TasNet c91 final benchmarks when ready\n\n[Timer]\nOnCalendar=*-*-* *:00/5:00\nAccuracySec=30s\nPersistent=true\nUnit=hs-tasnet-c91-full-v1-final-benchmarks.service\n\n[Install]\nWantedBy=timers.target\n"
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-full-v1-watchdog.timer",
+      "link": "/home/axel/.config/systemd/user/timers.target.wants/hs-tasnet-c91-full-v1-watchdog.timer",
+      "target": "/home/axel/.config/systemd/user/hs-tasnet-c91-full-v1-watchdog.timer",
+      "unit_sha256": "5ad716003d2c4e0bd3877057caf01f356946caa64856531d330e3faa25007d3e",
+      "unit_contents": "[Unit]\nDescription=Periodically ensure incomplete HS-TasNet c91 training is running\n\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nAccuracySec=30s\nPersistent=true\nUnit=hs-tasnet-c91-full-v1-watchdog.service\n\n[Install]\nWantedBy=timers.target\n"
+    },
+    {
+      "scope": "system",
+      "unit": "c236-qualification-resume.service",
+      "link": "/etc/systemd/system/multi-user.target.wants/c236-qualification-resume.service",
+      "target": "/etc/systemd/system/c236-qualification-resume.service",
+      "unit_sha256": "a53008a7ce7b37d4b9f00769eeb4c806043d751eadc69c1cea2e81a89b4538d4",
+      "unit_contents": "[Unit]\nDescription=c236 authenticated qualification recovery\nRequires=c236-qualification-swap.service\nAfter=local-fs.target c236-qualification-swap.service\nOnSuccess=c236-checked-export.service\nStartLimitIntervalSec=3600\nStartLimitBurst=8\n\n[Service]\nType=simple\nUser=axel\nGroup=axel\nWorkingDirectory=/home/axel/autoresearch/codex/HS-TasNet-latency11-v1-state/workspaces/c236-terminal-recovery-chain-preparation-v1\nEnvironment=HOME=/home/axel\nEnvironment=PATH=/home/axel/miniforge3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nEnvironment=CUBLAS_WORKSPACE_CONFIG=:4096:8\nEnvironment=CUDA_VISIBLE_DEVICES=0\nEnvironment=PYTHONNOUSERSITE=1\nEnvironment=PYTHONDONTWRITEBYTECODE=1\nEnvironment=OMP_NUM_THREADS=1\nEnvironment=MKL_NUM_THREADS=1\nExecStart=/home/axel/miniforge3/bin/python -u /home/axel/autoresearch/codex/HS-TasNet-latency11-v1-state/workspaces/c236-terminal-recovery-chain-preparation-v1/run_c236_post_training_chain.py --execute --poll-seconds 15 --timeout-seconds 0 --max-clean-attempts 3 --expected-pid 3715111 --expected-session 3715111\nRestart=on-failure\nRestartSec=30\nTimeoutStartSec=infinity\nTimeoutStopSec=300\nKillMode=mixed\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n"
+    },
+    {
+      "scope": "system",
+      "unit": "c236-qualification-swap.service",
+      "link": "/etc/systemd/system/multi-user.target.wants/c236-qualification-swap.service",
+      "target": "/etc/systemd/system/c236-qualification-swap.service",
+      "unit_sha256": "d892bae6339727e963b74e8f6b0e047744ee4d2c17d1bfcf7bac1c9e3eb90179",
+      "unit_contents": "[Unit]\nDescription=c236 qualification safety swap\nAfter=local-fs.target\nBefore=c236-qualification-resume.service\n\n[Service]\nType=oneshot\nExecStart=/sbin/swapon --priority 10 /home/axel/.cache/c236-qualification.swap\nExecStop=/sbin/swapoff /home/axel/.cache/c236-qualification.swap\nRemainAfterExit=yes\nTimeoutStartSec=90\nTimeoutStopSec=300\n\n[Install]\nWantedBy=multi-user.target\n"
+    }
+  ],
+  "commands": [
+    {
+      "command": [
+        "systemctl",
+        "--user",
+        "--no-reload",
+        "disable",
+        "hs-tasnet-c126-v5-recovery-successor-v1.service",
+        "hs-tasnet-c91-step200000-b1-fallback.service",
+        "hs-tasnet-c91-step200000-capture.service",
+        "hs-tasnet-c91-step200000-gate.service",
+        "hs-tasnet-c91-step200000-missing-snapshot-recovery.service",
+        "hs-tasnet-c91-step225000-b1-fallback.service",
+        "hs-tasnet-c91-step225000-capture.service",
+        "hs-tasnet-c91-step225000-gate.service",
+        "hs-tasnet-c91-step225000-missing-snapshot-recovery.service",
+        "hs-tasnet-c91-step250000-armer.service",
+        "hs-tasnet-c91-step250000-b1-fallback.service",
+        "hs-tasnet-c91-step250000-capture.service",
+        "hs-tasnet-c91-step250000-gate.service",
+        "hs-tasnet-c91-step250000-missing-snapshot-recovery.service",
+        "hs-tasnet-c91-full-v1-final-audit.timer",
+        "hs-tasnet-c91-full-v1-final-benchmarks.timer",
+        "hs-tasnet-c91-full-v1-watchdog.timer"
+      ],
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "Failed to connect to bus: No such file or directory\n"
+    },
+    {
+      "action": "remove_user_enablement_symlinks_only",
+      "reason": "systemctl --user cannot connect to absent user bus",
+      "removed_links": [
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c126-v5-recovery-successor-v1.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-b1-fallback.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-capture.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-gate.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step200000-missing-snapshot-recovery.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-b1-fallback.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-capture.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-gate.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step225000-missing-snapshot-recovery.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-armer.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-b1-fallback.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-capture.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-gate.service",
+        "/home/axel/.config/systemd/user/default.target.wants/hs-tasnet-c91-step250000-missing-snapshot-recovery.service",
+        "/home/axel/.config/systemd/user/timers.target.wants/hs-tasnet-c91-full-v1-final-audit.timer",
+        "/home/axel/.config/systemd/user/timers.target.wants/hs-tasnet-c91-full-v1-final-benchmarks.timer",
+        "/home/axel/.config/systemd/user/timers.target.wants/hs-tasnet-c91-full-v1-watchdog.timer"
+      ]
+    },
+    {
+      "command": [
+        "sudo",
+        "-n",
+        "systemctl",
+        "--no-reload",
+        "disable",
+        "c236-qualification-resume.service",
+        "c236-qualification-swap.service"
+      ],
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "sudo: a password is required\n"
+    }
+  ],
+  "verification": [
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c126-v5-recovery-successor-v1.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-b1-fallback.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-capture.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-gate.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step200000-missing-snapshot-recovery.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-b1-fallback.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-capture.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-gate.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step225000-missing-snapshot-recovery.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-armer.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-b1-fallback.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-capture.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-gate.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-step250000-missing-snapshot-recovery.service",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-full-v1-final-audit.timer",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-full-v1-final-benchmarks.timer",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "user",
+      "unit": "hs-tasnet-c91-full-v1-watchdog.timer",
+      "autostart_removed": true,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "system",
+      "unit": "c236-qualification-resume.service",
+      "autostart_removed": false,
+      "unit_file_unchanged": true
+    },
+    {
+      "scope": "system",
+      "unit": "c236-qualification-swap.service",
+      "autostart_removed": false,
+      "unit_file_unchanged": true
+    }
+  ],
+  "status": "USER_AUTOSTARTS_DISABLED_SYSTEM_DISABLE_REQUIRES_ADMIN",
+  "disabled_count": 17,
+  "remaining_enabled": [
+    "c236-qualification-resume.service",
+    "c236-qualification-swap.service"
+  ],
+  "all_unit_files_unchanged": true
+}

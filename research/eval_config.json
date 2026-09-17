@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "sample_rate": 44100,
+  "source_order": [
+    "drums",
+    "bass",
+    "vocals",
+    "other"
+  ],
+  "alignment_samples": 512,
+  "seed": 1337,
+  "device": "cuda:0",
+  "deterministic_algorithms": true,
+  "single_source_probes": true,
+  "single_source_probe_tracks": [
+    "ANiMAL - Rockshow",
+    "Fergessen - Nos Palpitants",
+    "Patrick Talbot - A Reason To Leave",
+    "Young Griffo - Pennies"
+  ],
+  "default_excerpts": [
+    {
+      "id": "early",
+      "start_seconds": 30.0,
+      "duration_seconds": 15.0
+    },
+    {
+      "id": "middle",
+      "start_seconds": 75.0,
+      "duration_seconds": 15.0
+    }
+  ],
+  "metrics": {
+    "sample_rate": 44100,
+    "window_samples": 44100,
+    "hop_samples": 44100,
+    "activity_dbfs": -50.0,
+    "estimate_floor_dbfs": -100.0,
+    "epsilon": 1e-12,
+    "db_floor": -60.0,
+    "db_ceiling": 60.0,
+    "bands_hz": {
+      "low_20_250": [
+        20.0,
+        250.0
+      ],
+      "low_20_80": [
+        20.0,
+        80.0
+      ],
+      "low_80_250": [
+        80.0,
+        250.0
+      ],
+      "low_250_500": [
+        250.0,
+        500.0
+      ]
+    }
+  }
+}

@@ -1,0 +1,391 @@
+"""Prepared stdlib supervisor for one explicitly specified GPU child process.
+
+No GPU workload starts on import. Root reviews source and exact launch spec
+before executing. The supervisor never imports Torch or changes driver,
+registry, power, clock, or operating-system settings.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import csv
+from datetime import datetime, timezone
+import fcntl
+import hashlib
+import io
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+HERE = Path(__file__).resolve().parent
+POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+SMI = "/usr/lib/wsl/lib/nvidia-smi"
+SCAN_LIMIT = 512
+MAX_SCANNED_RECORDS = 4096
+SENTINEL = 63827  # Preserved 2026-09-06T03:09:20.0097296Z nvlddmkm BusReset TDR.
+SMI_FIELDS = ("uuid", "name", "driver_version", "memory.total", "memory.used",
+              "temperature.gpu", "power.draw", "power.limit", "utilization.gpu")
+
+
+def utc():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def sha(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+def event_query(previous=None, *, verify_sentinel=False):
+    """Read all providers by record order, never use StartTime filtering."""
+    require(previous is None or type(previous) is int and previous >= 0, "Invalid event high-water mark")
+    marker = -1 if previous is None else previous
+    sentinel = ""
+    if verify_sentinel:
+        sentinel = f'''
+$sentinel = @(Get-WinEvent -LogName System -FilterXPath "*[System[EventRecordID = {SENTINEL}]]" -MaxEvents 2 -ErrorAction Stop)
+if ($sentinel.Count -ne 1 -or $sentinel[0].ProviderName -ne 'nvlddmkm' -or $sentinel[0].Id -ne 153 -or $sentinel[0].ToXml() -notmatch 'BusReset TDR') {{ throw 'Known TDR sentinel was not recovered' }}
+'''
+    return f'''
+[Console]::Error.WriteLine('telemetry_phase:start:' + [DateTime]::UtcNow.ToString('o'))
+$ProgressPreference='SilentlyContinue'
+$ErrorActionPreference='Stop'
+try {{
+{sentinel}
+  [Console]::Error.WriteLine('telemetry_phase:before_initial_read:' + [DateTime]::UtcNow.ToString('o'))
+  $records=@(Get-WinEvent -LogName System -MaxEvents {SCAN_LIMIT} -ErrorAction Stop)
+  [Console]::Error.WriteLine('telemetry_phase:after_initial_read:' + [DateTime]::UtcNow.ToString('o'))
+  if ($records.Count -eq 0) {{ throw 'Empty System event log' }}
+  $previous=[long]{marker}
+  while ($previous -ge 0 -and $records[-1].RecordId -gt $previous -and $records.Count -lt {MAX_SCANNED_RECORDS}) {{
+    $before=[long]$records[-1].RecordId
+    $older=@(Get-WinEvent -LogName System -FilterXPath "*[System[EventRecordID < $before]]" -MaxEvents {SCAN_LIMIT} -ErrorAction Stop)
+    if ($older.Count -eq 0) {{ throw 'Event coverage gap while paging older records' }}
+    $records += $older
+  }}
+  [Console]::Error.WriteLine('telemetry_phase:coverage_loaded:' + [DateTime]::UtcNow.ToString('o'))
+  $new=@($records | Where-Object {{ $_.RecordId -gt $previous }} | ForEach-Object {{
+    [pscustomobject]@{{RecordId=[long]$_.RecordId; Id=[int]$_.Id; Provider=$_.ProviderName;
+      Level=$_.Level; Utc=$_.TimeCreated.ToUniversalTime().ToString('o'); Xml=$_.ToXml()}}
+  }})
+  [Console]::Error.WriteLine('telemetry_phase:records_encoded:' + [DateTime]::UtcNow.ToString('o'))
+  [pscustomobject]@{{Status='ok'; CheckedUtc=[DateTime]::UtcNow.ToString('o');
+    Count=$records.Count; RecordIds=@($records | ForEach-Object {{[long]$_.RecordId}});
+    NewRecords=$new; SentinelVerified={'$true' if verify_sentinel else '$false'}}} |
+    ConvertTo-Json -Depth 6 -Compress
+}} catch {{
+  [pscustomobject]@{{Status='error'; Error=$_.Exception.Message; ErrorId=$_.FullyQualifiedErrorId}} |
+    ConvertTo-Json -Compress
+  exit 2
+}}
+'''
+
+
+def validate_events(payload, previous=None):
+    require(payload.get("Status") == "ok", "Windows event query failed")
+    ids = payload.get("RecordIds")
+    require(isinstance(ids, list) and 1 <= len(ids) <= MAX_SCANNED_RECORDS
+            and payload.get("Count") == len(ids) and all(type(value) is int and value > 0 for value in ids),
+            "Malformed event scan coverage")
+    require(all(left == right + 1 for left, right in zip(ids, ids[1:])),
+            "System record scan has an interior gap, duplicate, or ordering change")
+    if previous is not None:
+        require(ids[0] >= previous and previous in ids, "System event coverage gap or log reset")
+    wanted = set(ids if previous is None else [value for value in ids if value > previous])
+    rows = payload.get("NewRecords")
+    require(isinstance(rows, list) and {row.get("RecordId") for row in rows} == wanted
+            and len(rows) == len(wanted), "New-record inventory differs from covered IDs")
+    require(all(isinstance(row.get("Xml"), str) and "<Event " in row["Xml"]
+                and isinstance(row.get("Provider"), str) and type(row.get("Id")) is int
+                for row in rows), "A raw event record is missing")
+    return ids[0], rows
+
+
+def reset_event(row):
+    provider, event_id = row["Provider"], row["Id"]
+    level = row.get("Level")
+    warning_or_error = type(level) is int and 1 <= level <= 3
+    return (provider == "nvlddmkm" and (event_id in (13, 14, 153) or warning_or_error)
+            or provider == "Display" and (event_id == 4101 or warning_or_error)
+            or provider == "Microsoft-Windows-WHEA-Logger"
+            or provider == "Microsoft-Windows-Resource-Exhaustion-Detector"
+            or provider == "Microsoft-Windows-Kernel-Power" and event_id == 41
+            or provider == "EventLog" and event_id == 6008)
+
+
+def parse_gpu(stdout):
+    rows = list(csv.reader(io.StringIO(stdout.strip())))
+    require(len(rows) == 1 and len(rows[0]) == len(SMI_FIELDS), "Expected one complete GPU telemetry row")
+    fields = dict(zip(SMI_FIELDS, (value.strip() for value in rows[0]), strict=True))
+    require(fields["uuid"].startswith("GPU-") and fields["driver_version"] not in ("", "N/A", "[N/A]"),
+            "GPU identity or driver telemetry unavailable")
+    for key in ("memory.total", "memory.used", "temperature.gpu"):
+        fields[key] = float(fields[key])
+        require(math.isfinite(fields[key]) and fields[key] >= 0, f"Invalid required GPU telemetry: {key}")
+    require(fields["memory.total"] > 0 and fields["memory.used"] <= fields["memory.total"], "Invalid GPU memory accounting")
+    # WSL NVML can omit these supplemental counters; retain the raw strings.
+    return fields
+
+
+def gpu_alert(gpu, baseline, *, max_temperature, memory_headroom):
+    if (gpu["uuid"], gpu["driver_version"], gpu["memory.total"]) != (
+            baseline["uuid"], baseline["driver_version"], baseline["memory.total"]):
+        return "GPU identity, driver, or total memory changed"
+    if gpu["temperature.gpu"] >= max_temperature:
+        return "GPU temperature reached the configured guard"
+    if gpu["memory.total"] - gpu["memory.used"] < memory_headroom:
+        return "GPU free memory fell below the configured headroom"
+    return None
+
+
+def progress_step(path):
+    """Read a bounded tail; ignore an incomplete append still being written."""
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, stream.tell() - 16384))
+        data = stream.read()
+    lines = data.split(b"\n")[:-1]
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(row, dict) and type(row.get("step")) is int and row["step"] >= 0:
+            return row["step"]
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--launch-spec", type=Path, required=True)
+    parser.add_argument("--launch-spec-sha256", required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--max-runtime-seconds", type=float, required=True)
+    parser.add_argument("--poll-seconds", type=float, default=2.0)
+    parser.add_argument("--query-timeout-seconds", type=float, default=10.0)
+    parser.add_argument("--startup-grace-seconds", type=float, default=120.0)
+    parser.add_argument("--progress-timeout-seconds", type=float, default=60.0)
+    parser.add_argument("--stop-grace-seconds", type=float, default=15.0)
+    parser.add_argument("--post-exit-quiet-seconds", type=float, default=10.0)
+    parser.add_argument("--max-temperature-c", type=float, default=80.0)
+    parser.add_argument("--memory-headroom-mib", type=float, default=4096.0)
+    args = parser.parse_args()
+    for key, value in vars(args).items():
+        if isinstance(value, float):
+            require(math.isfinite(value) and value > 0, f"Require finite positive {key}")
+    require(0.5 <= args.poll_seconds <= 10 and args.query_timeout_seconds <= 15
+            and args.stop_grace_seconds <= 30 and args.max_temperature_c <= 80
+            and args.memory_headroom_mib >= 4096 and 10 <= args.post_exit_quiet_seconds <= 30,
+            "Do not weaken the reviewed supervision limits")
+    require(sha(args.launch_spec) == args.launch_spec_sha256, "Launch spec changed after review")
+    spec = json.loads(args.launch_spec.read_text())
+    require(spec.get("schema") == "gpu-watchdog-launch-v1", "Unexpected launch spec schema")
+    command, cwd, overrides = spec["argv"], Path(spec["cwd"]), spec["environment"]
+    require(isinstance(command, list) and len(command) > 1 and all(isinstance(part, str) and part for part in command)
+            and Path(command[0]).is_absolute() and cwd.is_absolute() and cwd.is_dir(), "Use an explicit executable, argv, and cwd")
+    require(isinstance(overrides, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in overrides.items())
+            and overrides.get("CUDA_VISIBLE_DEVICES") == "0", "The reviewed child must explicitly select GPU 0")
+    progress = Path(spec["progress_path"])
+    require(progress.is_absolute(), "Progress log must be an absolute path")
+    out = args.output_dir.resolve()
+    require(out.parent == HERE and not out.exists(), "Use a new direct child result directory")
+    out.mkdir()
+    evidence = (out / "watchdog.jsonl").open("x", buffering=1)
+    lock = (HERE / "gpu-watchdog.lock").open("a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    child = None
+    child_log = None
+    launched = None
+    status, reason = "preflight", None
+    high_water = None
+    last_step = progress_step(progress)
+    last_progress = None
+    saw_progress = False
+    exited_at = None
+    interrupted = False
+    started = time.monotonic()
+    source_before = sha(__file__)
+
+    def record(event, **fields):
+        evidence.write(json.dumps({"utc": utc(), "monotonic": time.monotonic(), "event": event, **fields},
+                                  allow_nan=False) + "\n")
+        evidence.flush()
+        os.fsync(evidence.fileno())
+
+    def query(kind, argv):
+        began = time.monotonic()
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=args.query_timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            record("query_timeout", kind=kind, duration=time.monotonic() - began,
+                   stdout=repr(error.stdout), stderr=repr(error.stderr))
+            raise RuntimeError(f"{kind} telemetry timed out") from error
+        record("query", kind=kind, returncode=result.returncode, duration=time.monotonic() - began,
+               stdout=result.stdout, stderr=result.stderr)
+        require(result.returncode == 0, f"{kind} telemetry returned {result.returncode}")
+        return result.stdout
+
+    def events(previous, *, sentinel=False):
+        ps = event_query(previous, verify_sentinel=sentinel)
+        argv = [POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                base64.b64encode(ps.encode("utf-16le")).decode()]
+        payload = json.loads(query("windows_system", argv))
+        newest, rows = validate_events(payload, previous)
+        if sentinel:
+            require(payload.get("SentinelVerified") is True, "Known event-query regression check did not pass")
+        record("event_coverage", previous=previous, newest=newest, oldest=payload["RecordIds"][-1],
+               scanned=payload["Count"], new_records=len(rows))
+        return newest, rows
+
+    def gpu():
+        return parse_gpu(query("nvidia_smi", [SMI, "--query-gpu=" + ",".join(SMI_FIELDS),
+                                               "--format=csv,noheader,nounits"]))
+
+    def request_stop(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+    try:
+        record("configuration", argv=sys.argv, source_sha256=source_before, launch_spec=spec,
+               launch_spec_sha256=args.launch_spec_sha256, limits={key: value for key, value in vars(args).items()
+                   if isinstance(value, float)}, scope="one owned process session; no global GPU-job discovery guarantee")
+        high_water, old_rows = events(None, sentinel=True)
+        baseline = gpu()
+        reason = gpu_alert(baseline, baseline, max_temperature=args.max_temperature_c,
+                           memory_headroom=args.memory_headroom_mib)
+        require(reason is None, reason)
+        record("baseline", high_water=high_water, gpu=baseline, previous_progress_step=last_step,
+               prior_fault_records=[row["RecordId"] for row in old_rows if reset_event(row)])
+        require(not interrupted, "Stop requested during preflight")
+        require(sha(args.launch_spec) == args.launch_spec_sha256, "Launch spec changed during preflight")
+        high_water, prelaunch_rows = events(high_water)
+        require(not any(reset_event(row) for row in prelaunch_rows), "Fresh host fault during preflight")
+        child_log = (out / "child.log").open("xb")
+        child = subprocess.Popen(command, cwd=cwd, env={**os.environ, **overrides},
+                                 stdout=child_log, stderr=subprocess.STDOUT, start_new_session=True)
+        launched = last_progress = time.monotonic()
+        status = "running"
+        record("child_started", pid=child.pid, process_group=child.pid)
+        while True:
+            require(sha(__file__) == source_before and sha(args.launch_spec) == args.launch_spec_sha256,
+                    "Watchdog source or launch spec changed while supervising")
+            # Even a just-exited child receives one final event/telemetry check.
+            high_water, rows = events(high_water)
+            faults = [row for row in rows if reset_event(row)]
+            if faults:
+                record("fresh_host_fault", records=faults)
+                raise RuntimeError("Fresh NVIDIA/Display reset, WHEA, resource, or host reboot event")
+            current_gpu = gpu()
+            reason = gpu_alert(current_gpu, baseline, max_temperature=args.max_temperature_c,
+                               memory_headroom=args.memory_headroom_mib)
+            record("gpu", values=current_gpu)
+            require(reason is None, reason)
+            now = time.monotonic()
+            step = progress_step(progress)
+            if step is not None:
+                require(last_step is None or step >= last_step, "Owned progress counter moved backward")
+                if last_step is None or step > last_step:
+                    last_step, last_progress = step, now
+                    saw_progress = True
+                    record("progress", completed_step=step)
+            code = child.poll()
+            if code is not None:
+                if exited_at is None:
+                    exited_at = now
+                    record("child_exited", numeric_exit_code=code,
+                           quiet_interval_seconds=args.post_exit_quiet_seconds)
+                if now - exited_at >= args.post_exit_quiet_seconds:
+                    status = "pass" if code == 0 else "child_failed"
+                    reason = None if code == 0 else f"Child exit code {code}"
+                    break
+                time.sleep(args.poll_seconds)
+                continue
+            require(not interrupted, "External stop requested")
+            require(now - launched < args.max_runtime_seconds, "Bounded GPU stage reached its runtime limit")
+            if saw_progress or now - launched >= args.startup_grace_seconds:
+                require(now - last_progress < args.progress_timeout_seconds, "Owned child stopped reporting completed updates")
+            time.sleep(args.poll_seconds)
+    except BaseException as error:
+        status = ("blocked_preflight" if child is None else
+                  "health_failed_after_child_exit" if child.poll() is not None else "stopped_by_watchdog")
+        reason = repr(error)
+        record("stop_reason", reason=reason, latest_completed_step_seen=last_step)
+    finally:
+        if child is not None and child.poll() is None:
+            # Only this Popen-created session can be signalled. No PID/name scan.
+            record("owned_stop", pid=child.pid, signal="SIGTERM", grace_seconds=args.stop_grace_seconds)
+            child.send_signal(signal.SIGTERM)
+            try:
+                child.wait(timeout=args.stop_grace_seconds)
+            except subprocess.TimeoutExpired:
+                if child.poll() is None:
+                    try:
+                        owned_group = os.getpgid(child.pid) == child.pid
+                    except ProcessLookupError:
+                        owned_group = False
+                    if owned_group:
+                        record("owned_stop", pid=child.pid, signal="SIGKILL", scope="owned process group")
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    elif child.poll() is None:
+                        record("owned_stop", pid=child.pid, signal="SIGKILL", scope="owned PID; group changed")
+                        child.kill()
+                    child.wait(timeout=10)
+        if child_log is not None:
+            child_log.flush()
+            os.fsync(child_log.fileno())
+            child_log.close()
+        identities_after = {}
+        for name, path in (("source", Path(__file__)), ("launch_spec", args.launch_spec)):
+            try:
+                identities_after[name] = sha(path)
+            except OSError as error:
+                identities_after[name] = repr(error)
+        identities_unchanged = identities_after == {"source": source_before, "launch_spec": args.launch_spec_sha256}
+        if not identities_unchanged:
+            status, reason = "identity_failed", "Watchdog source or launch spec changed"
+        summary = {"schema": "gpu-process-watchdog-v1", "status": status, "reason": reason,
+                   "child_exit_code": child.returncode if child else None,
+                   "supervisor_health": "pass" if status in ("pass", "child_failed") else "failed",
+                   "child_pid": child.pid if child else None, "last_event_record_id": high_water,
+                   "latest_completed_step_seen": last_step, "wall_seconds": time.monotonic() - started,
+                   "source_sha256": source_before, "source_sha256_after": identities_after["source"],
+                   "launch_spec_sha256": args.launch_spec_sha256,
+                   "launch_spec_sha256_after": identities_after["launch_spec"], "identities_unchanged": identities_unchanged,
+                   "post_exit_quiet_seconds": args.post_exit_quiet_seconds,
+                   "post_exit_quiet_completed": status in ("pass", "child_failed"),
+                   "no_driver_registry_power_changes": True, "host_stability_proven": False,
+                   "post_alert_checkpoint_policy": "Retain artifacts; audit separately before treating any post-alert checkpoint as trustworthy"}
+        record("finished", **summary)
+        evidence.close()
+        summary["artifacts"] = {name: {"path": str(path), "sha256": sha(path), "bytes": path.stat().st_size}
+                                for name, path in (("watchdog_log", out / "watchdog.jsonl"), ("child_log", out / "child.log"))
+                                if path.exists()}
+        with (out / "result.json").open("x") as stream:
+            json.dump(summary, stream, indent=2, allow_nan=False)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        lock.close()
+        print(json.dumps(summary, allow_nan=False), flush=True)
+    return 0 if status == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

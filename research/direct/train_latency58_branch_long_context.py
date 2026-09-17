@@ -1,0 +1,268 @@
+"""Train two-second scored contexts with a B16 objective accumulated over two B8 microbatches."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+
+from research.direct.train_latency58 import ROOT, PRODUCTION, read, require, sha, state_sha256, verify_inputs, load_source, continuity
+from research.direct.run_latency58_quality import write
+
+
+from research.direct.train_latency58_branch_sdr_ema import advance_with_ema, compare_ema_to_fp64
+from research.direct.latency58_long_context_data import policy as data_policy, dataset as make_dataset, batch_recipes, audio_sha
+from research.direct.latency58_logical_batch_loss import prepare_reduction, policy as reduction_policy
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--plan-sha256", required=True)
+    parser.add_argument("--stage", type=Path, required=True)
+    parser.add_argument("--stage-sha256", required=True)
+    args = parser.parse_args()
+    require(Path.cwd() == ROOT and sha(args.plan) == args.plan_sha256 and sha(args.stage) == args.stage_sha256,
+            "Direct-SDR plan or stage changed")
+    plan, stage = read(args.plan), read(args.stage)
+    verify_inputs(plan)
+    verify_inputs(stage)
+    config = plan["config"]
+    require(plan["schema"] == "latency58-branch-memory-training-plan-v1" and stage["plan_sha256"] == args.plan_sha256
+            and stage["stop_step"] == (2 if stage["resource_only"] else config["steps"])
+            and all(os.environ.get(k) == v for k, v in plan["environment"].items()), "Training recipe or environment differs")
+    monitor = load_source("direct_sdr_watchdog", plan["watchdog_source"])
+    _, events = continuity(stage, monitor)
+    run = Path(stage["run_directory"])
+    require(run.is_relative_to(ROOT / "research/direct/runs/latency58") and not run.exists(), "Preserve direct-SDR runs")
+    from research.direct.latency58_sdr_checkpoint import require_space
+    require_space(plan, 600_000_000)
+    run.mkdir()
+    write(run / "event-continuity.json", events)
+    lock = (run / "trainer.lock").open("a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    import torch
+    from torch.utils.data import DataLoader
+    from research.direct.latency58_logical_batch_loss import objective, OBJECTIVE_VERSION as VERSION
+    from research.direct.latency58_remix_augmentation import AUGMENTATION, augment, recipe
+    from research.direct.latency58_branch_memory_checkpoint import load_model as load_parent
+    from research.direct.latency58_branch_memory import Latency58BranchMemoryModel, ADAPTERS
+    from research.direct.latency58_branch_memory_checkpoint import audit_live
+    from research.direct.latency58_branch_ema import BranchParameterEMA
+    from research.direct.latency58_branch_ema_checkpoint import save_generation, policy
+    from research.direct.latency58_branch_memory_context import render_scored_context
+    from research.direct.latency58_asymmetric import PRECISION_POLICY
+    require(plan["ema"] == policy(plan["ema"]["decay"])
+            and VERSION == plan["objective_version"] and plan["direct_sdr_weight"] == .2
+            and PRECISION_POLICY == plan["precision_policy"]
+            and plan["logical_batch_loss"] == reduction_policy(), "Objective or precision source differs")
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+    parent, _ = load_parent(plan["parent_checkpoint"])
+    require(plan["parent_kind"] == "saved_trained_branch_memory"
+            and plan["optimizer_initialization"] == "fresh_adam"
+            and plan["parent_weight_role"] == "ema"
+            and parent.provenance.get("checkpoint_weight_role") == "averaged_inference"
+            and type(parent) is Latency58BranchMemoryModel
+            and state_sha256(parent.state_dict()) == plan["parent_model_state_sha256"],
+            "Saved attention parent or continuation initialization changed")
+    model = parent
+    model.provenance = {**model.provenance,
+                        "branch_memory_previous_provenance": dict(model.provenance),
+                        "branch_memory_parent_model_state_sha256": plan["parent_model_state_sha256"]}
+    del parent
+    require(state_sha256(model.state_dict()) == plan["initialized_model_state_sha256"]
+            and state_sha256(dict(model.named_buffers())) == plan["fixed_buffers_sha256"]
+            and not torch.cuda.is_initialized(), "CPU parent initialization changed")
+    require(torch.__version__ == plan["torch_version"] and torch.cuda.is_available()
+            and torch.cuda.device_count() == 1 and torch.cuda.is_bf16_supported(), "Require the reviewed BF16 GPU")
+    torch.cuda.set_per_process_memory_fraction(.75)
+    sys.path.insert(0, str(PRODUCTION))
+    import train_production as production
+    production.configure_determinism(config["seed"])
+    from research.direct.latency58_recorded301_data import select_tracks, ROOT_WEIGHTS
+    production_config = read(PRODUCTION / "full_config.json")
+    _, tracks, manifest_sha, _ = production.load_corpus_manifest(
+        PRODUCTION / "manifests/combined.manifest.json", expected_file_sha256=plan["manifest_sha256"], config=production_config)
+    require(manifest_sha == plan["manifest_sha256"] and production_config["seed"] == config["data_seed"]
+            and production_config["sampling"]["root_weights"] == config["source_corpus_root_weights"]
+            and production_config["sampling"]["vocal_active_probability"] == config["vocal_active_probability"],
+            "Training corpus or sampling distribution changed")
+    tracks = select_tracks(tracks, plan["training_selection"])
+    require(config["root_weights"] == ROOT_WEIGHTS
+            and config["augmentation"] == data_policy()
+            and not plan["online_teacher_used"] and not plan["teacher_generated_targets_in_current_stage"],
+            "Unexpected recorded301 training recipe")
+    model.provenance = {**model.provenance, "branch_memory_current_stage_corpus": "301 recorded MUSDB18-HQ and MoisesDB training tracks",
+                        "branch_memory_current_stage_augmentation": data_policy(),
+                        "branch_memory_online_teacher_used": False,
+                        "branch_memory_teacher_generated_targets_in_current_stage": False,
+                        "branch_memory_training_selection": plan["training_selection"],
+                        "branch_memory_current_stage_training_context": {"warmup_samples": plan["warmup_samples"],
+                            "scored_samples": plan["scored_samples"], "logical_batch_size": 16, "microbatch_size": 8,
+                            "logical_batch_loss": reduction_policy()}}
+    model.cuda().train().requires_grad_(True)
+    model.training_precision = "bf16"
+    frozen = {name: value.clone() for name, value in model.named_buffers()}
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"], foreach=False)
+    audit_live(model, optimizer, 0, frozen)
+    require(config["microbatch_size"] == 8 and plan["accumulation_steps"] == 2
+            and config["batch_size"] == 16 and config["crop_samples"] == 176384
+            and plan["warmup_samples"] == 88064 and plan["scored_samples"] == 88320,
+            "Branch-memory training geometry changed")
+    if stage["resource_only"]:
+        from research.direct.check_latency58_branch_long_context_gpu import check_gpu
+        write(run / "branch-long-context-gpu-parity.json", check_gpu(model))
+        audit_live(model, optimizer, 0, frozen)
+    ema = BranchParameterEMA(model, decay=plan["ema"]["decay"],
+                             base_state_sha256=plan["parent_model_state_sha256"])
+    reference = ({name: parameter.detach().cpu().double().clone() for name, parameter in model.named_parameters()}
+                 if stage["resource_only"] else None)
+    arithmetic_checks = []
+    final_index = config["data_start"] + stage["stop_step"] * config["batch_size"]
+    dataset = make_dataset(production, tracks, config, final_index)
+    loader = DataLoader(dataset, batch_size=config["batch_size"], num_workers=config["workers"],
+        sampler=production.AbsoluteIndexSampler(config["data_start"], final_index), pin_memory=True,
+        worker_init_fn=production.worker_init, generator=torch.Generator().manual_seed(config["seed"] + 1),
+        multiprocessing_context="spawn", prefetch_factor=2)
+    stopped = False
+    def request_stop(signum, frame):
+        nonlocal stopped
+        stopped = True
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+    rehearsal = None if stage["resource_only"] else read(stage["resource_result"]["path"])
+    began, step, prefix = time.monotonic(), 0, []
+    previous_batch_done = began
+    torch.cuda.reset_peak_memory_stats()
+    with (run / "metrics.jsonl").open("x", buffering=1) as journal:
+        for mixture_cpu, truth_cpu in loader:
+            batch_arrived = time.monotonic()
+            data_wait = batch_arrived - previous_batch_done
+            require(not stopped and mixture_cpu.shape[0] == config["batch_size"], "Incomplete or interrupted batch")
+            if step < config["warmup"]:
+                lr = config["lr"] * (step + 1) / config["warmup"]
+            else:
+                phase = (step - config["warmup"]) / max(1, config["steps"] - 1 - config["warmup"])
+                lr = config["min_lr"] + .5 * (config["lr"] - config["min_lr"]) * (1 + math.cos(math.pi * phase))
+            optimizer.param_groups[0]["lr"] = lr
+            first_index = config["data_start"] + step * config["batch_size"]
+            pitch_rows = batch_recipes(config, first_index)
+            before_remix_sha = audio_sha(mixture_cpu, truth_cpu)
+            recipe_row = {key: value.tolist() for key, value in recipe(
+                seed=config["seed"], first_sample_index=first_index).items()}
+            mixture_cpu, truth_cpu, changed_cpu, factors_cpu = augment(
+                mixture_cpu, truth_cpu, seed=config["seed"], first_sample_index=first_index)
+            after_remix_sha = audio_sha(mixture_cpu, truth_cpu)
+            if step < 4:
+                expected = plan["qualified_data_prefix"][step]
+                require(expected["first_index"] == first_index
+                        and expected["input_sha256"] == before_remix_sha
+                        and expected["after_remix_sha256"] == after_remix_sha,
+                        "Actual trainer data differs from CPU-qualified pitch/remix pipeline")
+            optimizer.zero_grad(set_to_none=True)
+            reduction_targets = truth_cpu[..., plan["warmup_samples"]:].cuda(non_blocking=True)
+            reduction = prepare_reduction(reduction_targets)
+            del reduction_targets
+            micro_rows, input_hash = [], hashlib.sha256()
+            for offset in range(0, config["batch_size"], config["microbatch_size"]):
+                require(not stopped, "Interrupted accumulation")
+                mixture = mixture_cpu[offset:offset + config["microbatch_size"]].cuda(non_blocking=True)
+                targets = truth_cpu[offset:offset + config["microbatch_size"]].cuda(non_blocking=True)
+                changed = changed_cpu[offset:offset + config["microbatch_size"]]
+                factors = factors_cpu[offset:offset + config["microbatch_size"]]
+                for value in (mixture, targets, changed, factors):
+                    input_hash.update(value.detach().cpu().contiguous().numpy().tobytes())
+                output = render_scored_context(model, mixture, warmup_samples=plan["warmup_samples"], carry_state=True)
+                truth = targets[..., plan["warmup_samples"]:]
+                require(torch.equal(output.physical_mixture, mixture[..., plan["warmup_samples"]:])
+                        and output.initial_state_detached and output.scored_samples == plan["scored_samples"],
+                        "Training output lost physical alignment or detached warmup")
+                terms = objective(output.raw, output.deployed, truth, output.physical_mixture, reduction)
+                terms.total.backward()
+                require(all(p.grad is not None for p in model.parameters()), "A branch-memory parameter lacks a gradient")
+                micro_rows.append({"loss": float(terms.total.detach()), "negative_sdr_db": float(terms.negative_sdr_db.detach()),
+                    "waveform_loss": float(terms.waveform.detach()), "spectral_loss": float(terms.spectral.detach()),
+                    "raw_anchor": float(terms.raw_anchor.detach()),
+                    "reconstruction_loss": float(terms.reconstruction_loss.detach()),
+                    "direct_sdr_loss": float(terms.direct_sdr_loss.detach()),
+                    "absence_db": float(terms.absence_db.detach()),
+                    "direct_raw_anchor": float(terms.direct_raw_anchor.detach()),
+                    "augmented_examples": int(changed.sum()),
+                    "per_stem_negative_sdr_db": terms.per_stem_negative_sdr_db.detach().cpu().tolist(),
+                    "active_windows": terms.active_window_counts.cpu().tolist(), "absent_windows": terms.absent_window_counts.cpu().tolist()})
+                del mixture, targets, changed, factors, output, truth, terms
+            require([sum(r["active_windows"][i] for r in micro_rows) for i in range(4)] == reduction.active.tolist()
+                    and [sum(r["absent_windows"][i] for r in micro_rows) for i in range(4)] == reduction.absent.tolist(),
+                    "Microbatch activity differs from the whole-batch reference reduction")
+            refinement_gradients = {name: float(dict(model.named_parameters())[name].grad.norm()) for name in ADAPTERS}
+            if step < 2:
+                require(all(refinement_gradients[name] > 0 for name in ADAPTERS),
+                        "All trained branch-memory tensors must receive gradients from update one")
+            norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5., error_if_nonfinite=True, foreach=False)
+            ema_row = advance_with_ema(model, optimizer, ema, step=step + 1)
+            if reference is not None:
+                arithmetic_checks.append(compare_ema_to_fp64(model, ema, reference))
+            torch.cuda.synchronize()
+            step += 1
+            row = {"step": step, "lr": lr, "first_sample_index": config["data_start"] + (step - 1) * config["batch_size"],
+                   "next_sample_index": config["data_start"] + step * config["batch_size"],
+                   "augmentation_recipe": recipe_row, "pitch_tempo_recipes": pitch_rows,
+                   "pitch_tempo_selected_examples": sum(r["selected"] for r in pitch_rows),
+                   "before_remix_audio_sha256": before_remix_sha, "after_remix_audio_sha256": after_remix_sha,
+                   "augmented_inputs_sha256": input_hash.hexdigest(), "grad_norm": float(norm),
+                   "loss": sum(r["loss"] for r in micro_rows),
+                   "negative_sdr_db": sum(r["negative_sdr_db"] for r in micro_rows),
+                   "microbatches": micro_rows, "logical_batch_active_windows": reduction.active.tolist(),
+                   "logical_batch_absent_windows": reduction.absent.tolist(), "adam_steps_this_update": 1, "gradient_clips_this_update": 1,
+                   "branch_memory_gradient_norms": refinement_gradients, **ema_row}
+            if step <= 2:
+                prefix.append(row)
+                if rehearsal is not None:
+                    require(row == rehearsal["matching_production_updates"][step - 1], "Production prefix differs from resource rehearsal")
+                if step == 2:
+                    audit_live(model, optimizer, step, frozen)
+                    fingerprint = state_sha256(model.state_dict())
+                    if rehearsal is not None:
+                        require(fingerprint == rehearsal["final_raw_model_state_sha256"]
+                                and ema_row["ema_parameters_sha256"] == rehearsal["final_ema_parameters_sha256"],
+                                "Rehearsed raw or EMA update differs")
+            row = {**row, "data_wait_seconds": data_wait, "compute_and_audit_seconds": time.monotonic() - batch_arrived, "elapsed_seconds": time.monotonic() - began, "peak_vram_gib": torch.cuda.max_memory_allocated() / 2**30}
+            journal.write(json.dumps(row, allow_nan=False) + "\n")
+            journal.flush()
+            os.fsync(journal.fileno())
+            print(json.dumps({k: row[k] for k in ("step", "loss", "negative_sdr_db", "grad_norm", "elapsed_seconds", "peak_vram_gib")}), flush=True)
+            if step % 25 == 0:
+                audit_live(model, optimizer, step, frozen)
+                require_space(plan, 600_000_000)
+            del mixture_cpu, truth_cpu, changed_cpu, factors_cpu, reduction
+            previous_batch_done = time.monotonic()
+    require(not stopped and step == stage["stop_step"], "Training did not reach its requested endpoint")
+    audit_live(model, optimizer, step, frozen)
+    verify_inputs(plan)
+    verify_inputs(stage)
+    ema_state = ema.state_dict(model)
+    averaged_state = {**ema_state["parameters"], **ema_state["buffers"]}
+    summary = {"status": "pass", "updates": step,
+               "final_raw_model_state_sha256": state_sha256(model.state_dict()),
+               "final_model_state_sha256": state_sha256(averaged_state),
+               "final_ema_parameters_sha256": ema_state["ema_parameters_sha256"],
+               "ema_updates": ema.updates, "ema_policy": plan["ema"],
+               "resource_ema_arithmetic_checks": arithmetic_checks,
+               "fixed_buffers_unchanged": True, "matching_production_updates": prefix,
+               "peak_vram_gib": torch.cuda.max_memory_allocated() / 2**30, "elapsed_seconds": time.monotonic() - began,
+               "source_bindings_unchanged": True, "plan_sha256": args.plan_sha256, "checkpoint_written": not stage["resource_only"]}
+    if not stage["resource_only"]:
+        summary["checkpoint"] = save_generation(model, optimizer, ema, step, plan, args.plan_sha256, run)
+    write(run / "result.json", summary)
+    print(json.dumps({"status": "pass", "updates": step, "checkpoint_written": summary["checkpoint_written"]}), flush=True)
+
+
+if __name__ == "__main__":
+    main()
