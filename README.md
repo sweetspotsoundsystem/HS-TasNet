@@ -8,8 +8,8 @@ Implementation of [HS-TasNet](https://arxiv.org/abs/2402.17701), "Real-time Low-
 
 The released model separates **stereo 44.1 kHz audio** into **Drums, Bass,
 Vocals and Other**. It combines spectrogram and waveform estimates with
-recurrent state, using a 1024-sample analysis window, a 256-sample synthesis
-frame and a 128-sample hop. Its output is delayed by one hop (2.90 ms).
+causal attention and eight recurrent states, using a 1024-sample analysis
+window, a 256-sample synthesis frame and a 128-sample hop. Its output is delayed by one hop (2.90 ms).
 [StemgenRT](https://github.com/sweetspotsoundsystem/stemgen-rt) adds asynchronous
 scheduling for DAW use: 256 samples / 5.80 ms total with a 128-sample host buffer.
 
@@ -36,32 +36,39 @@ stems = separator.separate(audio.T)  # [4, 2, samples]: drums, bass, vocals, oth
 For chunked integration, use `process_chunk`, `flush` and `reset`; see the
 [model interface](models/README.md). The Python API runs synchronously on CPU
 and allocates memory, so call it from a worker when integrating with playback.
-The download is pinned to the same model used by StemgenRT and verified by
-size and SHA-256. Weights are not included in the Python wheel.
+The default download matches StemgenRT 0.5.0: the integer model with fused
+attention projections, verified by size and SHA-256. The runtime uses one CPU
+thread and the same KleidiAI-disabled setting as the plugin. The user reports
+zero fallback in their M4 plugin test. Weights are not included in the Python
+wheel.
 
-## Trainable streaming model
+## Trainable streaming baseline
 
-`StreamingHSTasNet` is the PyTorch architecture used by the released weights.
-Import those weights, fine-tune on aligned stem WAVs, resume Adam checkpoints,
-and export a verified streaming ONNX model with the
-[streaming training guide](docs/streaming-training.md).
+`StreamingHSTasNet` retains the earlier four-state FP32 architecture and its
+exact weight importer. Download that model with `--variant trainable`, then
+fine-tune on aligned stem WAVs, resume Adam checkpoints, and export a verified
+streaming ONNX model with the [training guide](docs/streaming-training.md).
+The current eight-state integer inference graph has a different architecture;
+it cannot be imported as this four-state training model.
 
 ```bash
 pip install -e '.[streaming,onnx]'
-python scripts/import_streaming_weights.py --onnx models/hop128.onnx --output models/hop128.pt
+python scripts/download_streaming_model.py --variant trainable
+python scripts/import_streaming_weights.py --onnx models/hop128-trainable.onnx --output models/hop128-trainable.pt
 ```
 
 ```python
 import torch
 from hs_tasnet import StreamingHSTasNet
 
-model = StreamingHSTasNet.from_checkpoint("models/hop128.pt")
+model = StreamingHSTasNet.from_checkpoint("models/hop128-trainable.pt")
 stems = model.separate(torch.zeros(1, 2, 44100))  # aligned [1,4,2,44100]
 ```
 
 The original `HSTasNet` and `Trainer` API below remain available for the older
 configurable architecture. `HSTasNet()` and `StreamingHSTasNet()` both initialize
-untrained weights; use `StreamingHSTasNet.from_checkpoint` for this release.
+untrained weights; use `StreamingHSTasNet.from_checkpoint` for the trainable
+baseline.
 
 ## Install
 

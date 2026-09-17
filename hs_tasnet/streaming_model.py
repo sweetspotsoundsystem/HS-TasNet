@@ -1,4 +1,4 @@
-"""Trainable PyTorch definition of the released stereo streaming architecture.
+"""Trainable PyTorch definition of the four-state FP32 streaming baseline.
 
 The model emits audio with 128 samples of delay. Playback queueing belongs to
 its host. ``render`` exposes both raw four-stem predictions and the deployed

@@ -45,7 +45,7 @@ jobs:
           python -m pip install -e . --no-deps
       - name: Download and import the released weights
         run: |
-          python scripts/download_streaming_model.py
+          python scripts/download_streaming_model.py --variant trainable
           python scripts/import_streaming_weights.py
       - name: Check model, loss, exact Adam resume and ONNX export
         run: python -m pytest tests/test_streaming_model.py tests/test_streaming_training.py tests/test_streaming_export.py -q

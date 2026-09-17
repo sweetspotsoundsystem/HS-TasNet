@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_export_preserves_model_and_verifies_recurrent_states(tmp_path):
     torch.set_num_threads(1)
-    model = import_released_onnx(ROOT / "models/hop128.onnx")
+    model = import_released_onnx(ROOT / "models/hop128-trainable.onnx")
     before = state_sha256(model.state_dict())
     model.train()
     model.fusion_branch.eval()

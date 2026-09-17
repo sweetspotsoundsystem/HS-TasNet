@@ -443,6 +443,7 @@ def verify_onnx(model, wrapper, path, *, hops=48, audio_paths=(), threads=1):
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     options.add_session_config_entry("session.intra_op.allow_spinning", "0")
     options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    options.add_session_config_entry("mlas.disable_kleidiai", "1")
     session = ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
     require(session.get_providers() == ["CPUExecutionProvider"], "Expected CPU provider only")
     for actual, names, shapes in ((session.get_inputs(), INPUT_NAMES, INPUT_SHAPES),

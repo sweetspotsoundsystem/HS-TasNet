@@ -137,10 +137,10 @@ def test_real_model_adam_resume_replays_next_update(tmp_path, with_teacher):
     teacher = AlignedTeacherFixture() if with_teacher else None
     if with_teacher:
         config = replace(config, teacher_weight=.5)
-    checkpoint = ROOT / "models/hop128.pt"
+    checkpoint = ROOT / "models/hop128-trainable.pt"
     if not checkpoint.exists():
         checkpoint = tmp_path / "initial.pt"
-        save_streaming_checkpoint(import_released_onnx(ROOT / "models/hop128.onnx"), checkpoint)
+        save_streaming_checkpoint(import_released_onnx(ROOT / "models/hop128-trainable.onnx"), checkpoint)
     reference = train_streaming(config, manifest, tmp_path / "reference", checkpoint=checkpoint, teacher=teacher, device="cpu")
     reference_path = tmp_path / "reference/step-000002.pt"
     expected = read_streaming_checkpoint(reference_path)

@@ -5,25 +5,27 @@ worker when integrating it with audio playback; instances are not thread-safe.
 """
 
 from hashlib import sha256
+import json
 from pathlib import Path
 
 import numpy as np
 
 
-MODEL_SHA256 = "b8574ac2e67bcd1df533e3fc7464c0659d4bfa6744cfbb4389c0967271594fe3"
+_MODELS = json.loads(Path(__file__).with_name("streaming_models.json").read_text())
+MODEL_SHA256 = _MODELS["current"]["sha256"]
+TRAINABLE_MODEL_SHA256 = _MODELS["trainable"]["sha256"]
 SAMPLE_RATE = 44100
 HOP_SAMPLES = 128
 SOURCE_ORDER = ("drums", "bass", "vocals", "other")
-_STATES = {
-    "audio_history": (1, 2, 896),
-    "fusion_hidden": (2, 1, 1000),
-    "spectral_numerator_tail": (1, 4, 2, 128),
-    "waveform_tail": (1, 4, 2, 128),
-}
+_STATE_FAMILIES = {name: {key: tuple(shape) for key, shape in model["states"].items()}
+                   for name, model in _MODELS.items()}
 
 
 class StreamingSeparator:
-    """Separate float32 audio at 44.1 kHz, preserving four recurrent states.
+    """Separate float32 audio at 44.1 kHz, preserving every recurrent state.
+
+    The default graph has eight states. Explicitly checksum-pinned four-state
+    training exports remain supported; states never cross model instances.
 
     ``process_chunk`` accepts [2, 128] and returns [4, 2, 128], aligned to
     the previous input hop. Its first result after reset is ``None``.
@@ -52,12 +54,19 @@ class StreamingSeparator:
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         options.add_session_config_entry("session.intra_op.allow_spinning", "0")
         options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+        options.add_session_config_entry("mlas.disable_kleidiai", "1")
         self._session = ort.InferenceSession(
             str(path), sess_options=options, providers=["CPUExecutionProvider"]
         )
-        inputs = {"audio_chunk": (1, 2, 128), **_STATES}
+        actual_inputs = {node.name: tuple(node.shape) for node in self._session.get_inputs()}
+        families = [states for states in _STATE_FAMILIES.values()
+                    if actual_inputs == {"audio_chunk": (1, 2, 128), **states}]
+        if len(families) != 1:
+            raise ValueError("Model streaming interface differs")
+        self._state_shapes = families[0]
+        inputs = {"audio_chunk": (1, 2, 128), **self._state_shapes}
         outputs = {"separated_chunk": (1, 4, 2, 128)}
-        outputs.update({"next_" + name: shape for name, shape in _STATES.items()})
+        outputs.update({"next_" + name: shape for name, shape in self._state_shapes.items()})
         for nodes, expected in ((self._session.get_inputs(), inputs),
                                 (self._session.get_outputs(), outputs)):
             actual = {node.name: tuple(node.shape) for node in nodes}
@@ -69,7 +78,7 @@ class StreamingSeparator:
     def reset(self):
         """Clear every state after a seek, input gap, or new audio stream."""
         self._state = {name: np.zeros(shape, dtype=np.float32)
-                       for name, shape in _STATES.items()}
+                       for name, shape in self._state_shapes.items()}
         self._pending = False
 
     @staticmethod
@@ -97,7 +106,7 @@ class StreamingSeparator:
             if not all(np.isfinite(value).all() for value in values):
                 raise RuntimeError("Model returned non-finite output or state")
             valid = self._pending
-            self._state = dict(zip(_STATES, values[1:]))
+            self._state = dict(zip(self._state_shapes, values[1:]))
             self._pending = True
             return values[0][0] if valid else None
         except Exception:

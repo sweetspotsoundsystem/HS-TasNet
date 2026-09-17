@@ -1,0 +1,82 @@
+{
+  "current": {
+    "filename": "hop128.onnx",
+    "url": "https://media.githubusercontent.com/media/sweetspotsoundsystem/stemgen-rt/35b533017b32099f417b6c965e37214b72a8ccea/model/model.onnx",
+    "sha256": "08424ca91feae8d4746442a35ebf70489dea70ea6e81401b39483cf02d497748",
+    "bytes": 37532574,
+    "states": {
+      "audio_history": [
+        1,
+        2,
+        896
+      ],
+      "fusion_hidden": [
+        2,
+        1,
+        1000
+      ],
+      "spectral_numerator_tail": [
+        1,
+        4,
+        2,
+        128
+      ],
+      "waveform_tail": [
+        1,
+        4,
+        2,
+        128
+      ],
+      "attention_keys": [
+        1,
+        31,
+        64
+      ],
+      "attention_values": [
+        1,
+        31,
+        128
+      ],
+      "spec_memory_hidden": [
+        1,
+        1,
+        500
+      ],
+      "waveform_memory_hidden": [
+        1,
+        1,
+        500
+      ]
+    }
+  },
+  "trainable": {
+    "filename": "hop128-trainable.onnx",
+    "url": "https://media.githubusercontent.com/media/sweetspotsoundsystem/stemgen-rt/f8fb3beb95f8a17f80e1c195964f9cf1c42f2cee/model/model.onnx",
+    "sha256": "b8574ac2e67bcd1df533e3fc7464c0659d4bfa6744cfbb4389c0967271594fe3",
+    "bytes": 111344465,
+    "states": {
+      "audio_history": [
+        1,
+        2,
+        896
+      ],
+      "fusion_hidden": [
+        2,
+        1,
+        1000
+      ],
+      "spectral_numerator_tail": [
+        1,
+        4,
+        2,
+        128
+      ],
+      "waveform_tail": [
+        1,
+        4,
+        2,
+        128
+      ]
+    }
+  }
+}

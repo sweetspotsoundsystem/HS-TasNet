@@ -112,19 +112,22 @@ def load_streaming_checkpoint(path):
 
 
 def import_released_onnx(path):
-    """Recover every trained tensor from the checksum-pinned released graph.
+    """Recover every trained tensor from the four-state FP32 training graph.
 
-    This importer supports the released graph only. Its three constant-folded
-    linear weights are transposed back, and source scales are reshaped. The
+    This importer supports the pinned four-state FP32 training graph only.
+    The current integer inference graph cannot recover its original FP32 weights.
+    Three constant-folded linear weights are transposed back, and source scales
+    are reshaped. The
     unused waveform window sum is rebuilt from its fixed Hann window. The
     final fingerprint must equal the original PyTorch training checkpoint.
     """
-    from .streaming import MODEL_SHA256
+    from .streaming import TRAINABLE_MODEL_SHA256
     import onnx
     from onnx import numpy_helper
 
     path = Path(path)
-    require(file_sha256(path) == MODEL_SHA256, "Import requires the released ONNX model checksum")
+    require(file_sha256(path) == TRAINABLE_MODEL_SHA256,
+            "Import requires the four-state FP32 training model; download with --variant trainable")
     graph = onnx.load(str(path), load_external_data=False)
     require(all(value.data_location != onnx.TensorProto.EXTERNAL for value in graph.graph.initializer),
             "The released graph must contain all its weights")
@@ -149,7 +152,7 @@ def import_released_onnx(path):
         require(value.shape == expected.shape and value.dtype == torch.float32 and bool(torch.isfinite(value).all()),
                 "Released tensor differs: " + name)
         state[name] = value
-    require(state_sha256(state) == RELEASED_STATE_SHA256 and file_sha256(path) == MODEL_SHA256,
+    require(state_sha256(state) == RELEASED_STATE_SHA256 and file_sha256(path) == TRAINABLE_MODEL_SHA256,
             "Imported parameters do not exactly reproduce the training checkpoint")
     model.load_state_dict(state, strict=True)
     return model.eval()

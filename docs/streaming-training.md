@@ -1,6 +1,6 @@
-# Training the released streaming architecture
+# Training the four-state FP32 streaming baseline
 
-`hs_tasnet.streaming_model.StreamingHSTasNet` implements the released stereo
+`hs_tasnet.streaming_model.StreamingHSTasNet` implements the earlier stereo
 44.1 kHz network: 1024-sample asymmetric spectral analysis, a learned waveform
 branch, a two-layer GRU, 256-sample synthesis and a 128-sample hop. It has 21
 trainable parameter tensors and four explicit streaming states. Its outputs
@@ -11,7 +11,10 @@ vocals and sets other to the delayed mixture minus those three predictions.
 `render()` exposes both estimates for training. `forward()` returns deployed
 audio and state, delayed by 128 samples. `separate()` starts from zero state,
 adds the final flush hop and returns audio aligned to the input sample count.
-Host scheduling adds its own latency; see the [released interface](../models/README.md).
+Host scheduling adds its own latency. The default inference download now uses
+eight states, causal attention, and integer projections; it is a different
+architecture. This guide retains the four-state FP32 model for training and
+export. See the [current released interface](../models/README.md).
 
 The older configurable `HSTasNet`/`Trainer` and `train.py` remain available.
 Their checkpoints use a different architecture and format.
@@ -24,12 +27,13 @@ CUDA-enabled PyTorch build for GPU training, then run from this checkout:
 
 ```bash
 pip install -e '.[streaming,onnx]'
-python scripts/download_streaming_model.py
-python scripts/import_streaming_weights.py --onnx models/hop128.onnx --output models/hop128.pt
+python scripts/download_streaming_model.py --variant trainable
+python scripts/import_streaming_weights.py --onnx models/hop128-trainable.onnx --output models/hop128-trainable.pt
 ```
 
-The importer accepts only the checksum-pinned release. It recovers every
-parameter and buffer, reverses constant-folded linear transposes and checks
+The importer accepts only the checksum-pinned four-state FP32 baseline. It
+recovers every parameter and buffer, reverses constant-folded linear transposes
+and checks
 the exact original PyTorch state fingerprint:
 
 ```text
@@ -43,7 +47,7 @@ historical optimizer state. The imported checkpoint is approximately 111 MB.
 import torch
 from hs_tasnet import StreamingHSTasNet
 
-model = StreamingHSTasNet.from_checkpoint("models/hop128.pt")
+model = StreamingHSTasNet.from_checkpoint("models/hop128-trainable.pt")
 stems = model.separate(torch.zeros(1, 2, 44100))  # [1,4,2,44100]
 
 state = model.initial_state(batch_size=1)
@@ -107,7 +111,7 @@ released weights, using no external teacher:
 python train_streaming.py \
   --manifest data/train-manifest.json \
   --config configs/hop128-supervised.json \
-  --checkpoint models/hop128.pt \
+  --checkpoint models/hop128-trainable.pt \
   --output streaming-runs/finetune-001
 ```
 
@@ -142,7 +146,7 @@ config and stop early, then resume into a new directory:
 ```bash
 python train_streaming.py \
   --manifest data/train-manifest.json --config configs/hop128-supervised.json \
-  --checkpoint models/hop128.pt --stop-after 25 --output streaming-runs/first-25
+  --checkpoint models/hop128-trainable.pt --stop-after 25 --output streaming-runs/first-25
 
 python train_streaming.py \
   --manifest data/train-manifest.json --config configs/hop128-supervised.json \
@@ -209,7 +213,9 @@ report = json.load(open("models/finetuned.verification.json"))
 separator = StreamingSeparator("models/finetuned.onnx", expected_sha256=report["onnx_sha256"])
 ```
 
-The file example accepts the same digest through `--sha256`. Omitting it keeps
-the released-model checksum pin. Export parity checks numerical correctness;
+The file example accepts the same digest through `--sha256`. The inference
+API recognizes this four-state interface while its default checksum pin selects
+the current eight-state inference model. Export parity checks numerical
+correctness;
 it does not establish separation quality, perceptual improvement or DAW timing.
 Evaluate held-out songs and listen before selecting new weights for deployment.

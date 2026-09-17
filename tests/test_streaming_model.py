@@ -18,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope="module")
 def model():
     torch.set_num_threads(1)
-    return import_released_onnx(ROOT / "models/hop128.onnx")
+    return import_released_onnx(ROOT / "models/hop128-trainable.onnx")
 
 
-@pytest.mark.parametrize("audio,expected", references(), ids=lambda value: str(value.shape))
+@pytest.mark.parametrize("audio,expected", references("hop128-trainable-pytorch"), ids=lambda value: str(value.shape))
 def test_original_reference_and_partial_alignment(model, audio, expected):
     with torch.no_grad():
         output = model.separate(torch.from_numpy(audio.copy())[None])[0].numpy()
