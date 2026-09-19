@@ -158,6 +158,18 @@ a different environment or recipe. Preserve the scientific settings and
 rebind paths and prerequisites explicitly; do not bypass the historical
 validator or point new work at an existing run directory.
 
+## Retained inference experiment
+
+`profile_latency58_current_operators.py` profiles the unchanged fused-QKV graph
+with the released ONNX Runtime 1.26.0. The subsequent
+`check_latency58_small_projections_fp32.py` experiment kept all trained weights
+and changed only three small projection products to FP32. Its independent
+reference failed the existing audio parity limit in the multitone/noise/silence
+fixture with both optimization settings (maximum error about 3.07e-5 versus
+1e-5). The experiment is rejected; no speed or quality claim is made. The
+shipped graph retains its existing arithmetic. These source files preserve the
+experiment and its rejection logic for reproducibility.
+
 ## Evaluation and release checks
 
 The included evaluation protocol retains the 14-track, 28-excerpt validation

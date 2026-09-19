@@ -1658,6 +1658,12 @@
       "sha256": "c12dc7db2a1183eb9499ca6de083eeaba70ac8ccc8cd9ccae7e863aecf6fb32a",
       "source_path": "research/direct/check_latency58_sdr_teacher.py"
     },
+    "research/direct/check_latency58_small_projections_fp32.py": {
+      "bytes": 12704,
+      "origin": "repository",
+      "sha256": "7aab4fb2961e93b677749cebec312452b8ee9367efa395a91b9ac10ccd3d4edb",
+      "source_path": "research/direct/check_latency58_small_projections_fp32.py"
+    },
     "research/direct/check_latency58_state_warmup.py": {
       "bytes": 8470,
       "origin": "repository",
@@ -4046,6 +4052,18 @@
       "sha256": "65abc82e7b0353a16e69a74e2580ccfd9d107bb030ec6bcd0aaebb9c4c2d7100",
       "source_path": "research/direct/latency58_sdr_teacher.py"
     },
+    "research/direct/latency58_small_projections_fp32.py": {
+      "bytes": 4426,
+      "origin": "repository",
+      "sha256": "186baa9dafb68d3332d41204a7fa2842703d9dc2d2911e65372da05d3d11a9df",
+      "source_path": "research/direct/latency58_small_projections_fp32.py"
+    },
+    "research/direct/latency58_small_projections_fp32_reference.py": {
+      "bytes": 5146,
+      "origin": "repository",
+      "sha256": "267e77e66bfce0f6b5d57e9b9e608ddd605496a5d654cd35ef4f2b3d0eb74f4a",
+      "source_path": "research/direct/latency58_small_projections_fp32_reference.py"
+    },
     "research/direct/latency58_source_mixer.py": {
       "bytes": 8119,
       "origin": "repository",
@@ -4891,6 +4909,12 @@
       "origin": "repository",
       "sha256": "47de41a006c118a5e924d7433f2485365d5ac6090f708204835a56e4bccb8993",
       "source_path": "research/direct/profile_latency58_cpu_operators.py"
+    },
+    "research/direct/profile_latency58_current_operators.py": {
+      "bytes": 8918,
+      "origin": "repository",
+      "sha256": "0aa9cd79d7eb38ee5b9d4ab96936443af85a7d6c0bb91d554b4c79eba794e2fc",
+      "source_path": "research/direct/profile_latency58_current_operators.py"
     },
     "research/direct/profile_latency58_deployed_operators.py": {
       "bytes": 7953,
