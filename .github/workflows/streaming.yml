@@ -63,8 +63,9 @@ jobs:
               else:
                   with tarfile.open(path) as archive:
                       names = archive.getnames()
+              # sync_research.py now compares local hashes without copying research.
               forbidden = {'research', 'runs', 'hs_tasnet.py', 'streaming_model.py',
-                           'streaming_trainer.py', 'export_onnx.py', 'sync_research.py'}
+                           'streaming_trainer.py', 'export_onnx.py'}
               assert not any(forbidden.intersection(Path(name).parts) for name in names), path
               assert not any(name.endswith(('.pt', '.onnx')) for name in names), path
           PY
