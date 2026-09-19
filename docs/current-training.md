@@ -69,24 +69,30 @@ Recovery retains raw weights, Adam moments, EMA, CPU/CUDA/Python/NumPy RNG,
 sample addresses, the journal and schedule. Byte-plane compression and XOR
 references are lossless and are checked against the authenticated parent.
 
-The active plan now records an operational resume from update 750 after a
-temporary pytest symlink triggered the storage guard at update 800. The
-interrupted run and journal are retained; the 50 unsaved updates are repeated
-from the saved raw/Adam/EMA/RNG state. The training recipe and schedule are
-unchanged. The original plan is included alongside the resumed plan's source
-snapshot. `resume_latency58_four_second_shared.py` prepares and launches this
-specific audited recovery; the fresh-stage controller below rejects resume
-plans. Local tests sharing the monitored allocation use
-`scripts/run_cpu_tests.py` to suppress pytest's temporary symlinks before they
-are created.
+The active plan resumes at update 1,900 after the event-monitor worker exited
+at update 1,939. The interrupted runs and saved checkpoints are retained.
+The final 100 updates restore raw weights, Adam, EMA and all RNG streams;
+the 39 unsaved updates are replayed. The original training recipe, 2,000-update
+schedule and latency are unchanged. Checkpoint inspection, complete Windows
+event coverage and a fresh monitored idle check precede the restart. Missing
+historical process-exit receipts remain explicitly unknown.
 
-After this resumed run completes, use
-`python -m research.direct.run_latency58_four_second_recovery_quality --training-plan /path/to/plan-recovery001.json`.
-This controller reads the recovery execution receipts and plan. Its complete
-syntax tree matches the original quality controller after normalizing those
-four artifact paths; all saved-state, full-panel, per-stem and source-view
-checks remain intact. The frozen plan's original controller fields retain
-their historical values.
+`resume_latency58_four_second_shared_v2.py` prepares and launches this recovery,
+and `supervise_latency58_four_second_recovery_v2.py` records its actual exit.
+Both predecessor plans accompany the active recipe. Local tests sharing the
+monitored allocation use `scripts/run_cpu_tests.py` to suppress pytest's
+temporary symlinks before they are created.
+
+After the resumed run completes, use
+`python -m research.direct.run_latency58_four_second_recovery_quality_v2 --training-plan /path/to/plan-recovery002.json`.
+The saved-state audit follows the original, first-recovery and second-recovery
+receipt segments under their respective plan hashes, checks every retained
+parent save and the complete journal, and requires a successfully closed final
+monitor. Scoring, rendering, per-stem comparisons and selection decisions are
+unchanged. The frozen plan's original controller fields retain their
+historical values. The optional
+`supervise_latency58_four_second_quality_v2` wrapper waits for the actual
+training completion receipt and runs this CPU evaluation automatically.
 
 ## Run and inspect
 
@@ -97,7 +103,7 @@ python -m pip install -e '.[streaming,onnx,test]' 'torchcodec==0.6.0'
 python scripts/download_streaming_model.py
 python scripts/sync_research.py
 CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-  python -m pytest tests/test_current_research.py -q
+  python scripts/run_cpu_tests.py tests/test_current_research.py tests/test_recovery_lineage.py -q
 python -m research.direct.train_latency58_four_second_shared --help
 ```
 

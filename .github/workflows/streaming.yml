@@ -74,4 +74,4 @@ jobs:
           python scripts/sync_research.py
           python scripts/download_streaming_model.py
       - name: Check current architecture, gradients, exact packed recovery and export
-        run: python scripts/run_cpu_tests.py tests/test_current_research.py tests/test_export_onnx.py tests/test_cpu_test_runner.py -q
+        run: python scripts/run_cpu_tests.py tests/test_current_research.py tests/test_recovery_lineage.py tests/test_export_onnx.py tests/test_cpu_test_runner.py -q
