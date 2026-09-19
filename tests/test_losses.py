@@ -148,17 +148,27 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch):
     """
     import hs_tasnet.model
 
-    model = torch.nn.Linear(2, 8)
+    # Isolate this fixture from test order. Accumulating a million FP32 linear
+    # products in one batch versus B4/B1 partitions can itself exceed the VJP
+    # tolerance through reassociation. Use FP64 only for the tiny neural map
+    # and its parameter-gradient reduction; the actual loss coordinates and
+    # every loss operation still use the production FP32 arithmetic.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(43)
+        model = torch.nn.Linear(2, 8, dtype=torch.float64)
     with torch.no_grad():
         model.weight.mul_(.1)
         model.bias.mul_(.1)
+    last_coordinates = None
 
     def render(model, audio, *, warmup_samples, carry_state):
+        nonlocal last_coordinates
         assert carry_state
         # This fixture intentionally has no path from warmup to the gradient.
         scored = audio[..., warmup_samples:]
-        raw = model(scored.transpose(1, 2)).transpose(1, 2).reshape(len(audio), 4, 2, -1)
+        raw = model(scored.transpose(1, 2).double()).float().transpose(1, 2).reshape(len(audio), 4, 2, -1)
         deployed = raw + .03 * scored[:, None]
+        last_coordinates = raw.detach(), deployed.detach()
         return SimpleNamespace(raw=raw, deployed=deployed, initial_state_detached=True, flush_hops=1)
 
     monkeypatch.setattr(hs_tasnet.model, "render_scored_context", render)
@@ -167,17 +177,25 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch):
     targets[:3, 2] = 0
     mixture = targets.sum(1)
     auxiliary_mix, auxiliary_targets = losses.source_views(mixture, targets)
-    inputs = ((mixture, targets, losses.objective, 1.),
-              (auxiliary_mix, auxiliary_targets, losses.auxiliary_objective, .1))
+    inputs = (("ordinary", mixture, targets, losses.objective, 1.),
+              ("auxiliary", auxiliary_mix, auxiliary_targets, losses.auxiliary_objective, .1))
+    reference_coordinates = {}
     reference_loss = 0.
-    for audio, truth, objective, coefficient in inputs:
+    for group, audio, truth, objective, coefficient in inputs:
         result = render(model, audio, warmup_samples=128, carry_state=True)
+        reference_coordinates[group] = last_coordinates
         reference_loss = reference_loss + coefficient * objective(
             result.raw, result.deployed, truth[..., 128:], audio[..., 128:]).total
     expected = torch.autograd.grad(reference_loss, tuple(model.parameters()))
+
+    def compare_capture_coordinates(phase, group, offset):
+        if phase == "canonical_capture":
+            for actual, reference in zip(last_coordinates, reference_coordinates[group], strict=True):
+                assert torch.equal(actual, reference[offset:offset + len(actual)])
+
     rows = losses.accumulate_groups(model, mixture, targets, warmup_samples=128,
                                    ordinary_microbatch=4, auxiliary_microbatch=1,
-                                   verify_input_gradients=True)
+                                   verify_input_gradients=True, progress=compare_capture_coordinates)
     for parameter, reference in zip(model.parameters(), expected, strict=True):
         torch.testing.assert_close(parameter.grad, reference, atol=1e-6, rtol=1e-5)
     assert abs(sum(row["weighted_loss"] for row in rows.values()) - float(reference_loss.detach())) < 3e-6
