@@ -21,9 +21,9 @@ def digest(path):
     return value.hexdigest()
 
 
-def download(destination, *, variant="current"):
+def download(destination):
     """Publish verified bytes, preserving any existing destination."""
-    model = MODELS[variant]
+    model = MODELS["current"]
     destination = Path(destination)
     if destination.is_symlink():
         raise FileExistsError(f"Refusing a symlink destination: {destination}")
@@ -61,13 +61,11 @@ def download(destination, *, variant="current"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variant", choices=tuple(MODELS), default="current",
-                        help="current: M4-tested inference graph; trainable: four-state FP32 training baseline")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     destination = args.output or (Path(__file__).resolve().parents[1]
-                                  / "models" / MODELS[args.variant]["filename"])
-    print(f"Model ready: {download(destination, variant=args.variant)}")
+                                  / "models" / MODELS["current"]["filename"])
+    print(f"Model ready: {download(destination)}")
 
 
 if __name__ == "__main__":

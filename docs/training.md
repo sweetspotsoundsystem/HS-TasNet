@@ -1,0 +1,167 @@
+# Training, evaluation and export
+
+The maintained model has one geometry: stereo 44.1 kHz input, 1024-sample
+analysis, 256-sample synthesis, a 128-sample hop and eight streaming states.
+Install the appropriate PyTorch 2.8.0 build, then `pip install -e '.[training,onnx,test]'`.
+The export dependencies are pinned because integer lowering verifies a specific
+ONNX node inventory.
+Training also needs `ffmpeg` on `PATH`, compiled with the `rubberband` filter.
+Check it with `ffmpeg -hide_banner -h filter=rubberband`.
+
+## Audio manifests
+
+Prepare native stereo WAVs without resampling or normalization. Each song
+folder contains `mixture.wav`, `drums.wav`, `bass.wav`, `vocals.wav` and
+`other.wav`. A root may contain nested song folders. MoisesDB material must
+first be prepared in this four-source layout; this tool does not map its
+original instrument taxonomy.
+
+Build a held-out inventory first, then exclude it from training:
+
+```bash
+python scripts/build_streaming_manifest.py \
+  --root heldout=data/valid --split valid --output data/valid.json
+python scripts/build_streaming_manifest.py \
+  --root musdb18hq_train=data/musdb18hq/train \
+  --root moisesdb_train=data/moisesdb/train \
+  --weight musdb18hq_train=0.5 --weight moisesdb_train=0.5 \
+  --split train --exclude-manifest data/valid.json --output data/train.json
+```
+
+The builder records file hashes, frame counts, source order and vocal activity
+anchors, with roots relative to the manifest. It rejects duplicate mixture
+bytes and excludes exact paths/bytes in held-out manifests. Keep different
+encodings or related versions of a recording in the same split yourself.
+`--exclude-name` can exclude song folder names explicitly. Training verifies
+the audio inventory before starting; a provided validation inventory is also
+checked for overlap. It is a split guard, not an automatic evaluation schedule.
+
+## Current recipe
+
+`configs/current-training.json` preserves the selected four-second recipe:
+
+| Setting | Value |
+| --- | --- |
+| Context | 88,064 warmup + 176,512 scored samples |
+| Batch | 16 independent addressed crops |
+| Ordinary / auxiliary microbatch | 16 / 2 |
+| Root weights | 0.5 MUSDB18-HQ / 0.5 prepared MoisesDB |
+| Vocal activity probability | 0.85 |
+| Pitch/tempo selection | 20%; expanded 300,672-sample context |
+| Pitch / tempo | ±2 semitones; normal 5%, clamped to ±12% |
+| Optimizer | Adam, one update after the ordinary and auxiliary groups |
+| Learning rate | 100-update warmup to 3e-5; cosine to 3e-6 at update 2,000 |
+| Gradient clipping / EMA | 5.0 / 0.995 |
+| Precision | CUDA BF16 with FP32 model parameters and states |
+| First absolute sample address | 4,132,000 |
+
+The auxiliary source views retain their original weights and whole-group
+denominators. Source remixing is addressed in groups of 16. Warmup initializes
+state without retaining its gradient graph; the scored region uses continuous
+state and the model's physical delay. The selected recipe requires substantial
+GPU memory; CPU checks do not qualify its production resource use.
+
+Use a copied configuration to select different roots or a new sample address.
+Root insertion order is part of sampling identity, and `data_start` must be a
+multiple of 16. A small CPU experiment needs `device="cpu"`, `precision="fp32"`
+and typically `workers=0`; the trainer still requires the full crop and batch
+geometry. Reducing the stopping point does not shorten the configured schedule.
+
+## Start and resume
+
+The released integer ONNX graph is sufficient for inference. It cannot recover
+the original FP32 training weights. Supply a native current-model checkpoint
+and its independently obtained SHA-256 to initialize a new Adam/EMA run:
+
+```bash
+python train_streaming.py --config configs/current-training.json \
+  --manifest data/train.json --validation-manifest data/valid.json \
+  --checkpoint models/current-ema.pt --sha256 EXPECTED_CHECKPOINT_SHA256 \
+  --role ema --output runs/first
+```
+
+Use `--role raw` for a raw native checkpoint. Use `--scratch` in place of the
+checkpoint arguments to explicitly start untrained. `--stop-after 50` ends at
+update 50 while retaining the original 2,000-update learning-rate schedule.
+Every run requires a new output directory. The installed `hs-tasnet-train`
+command has the same options.
+
+The runner writes config/input identities, per-update metrics, `checkpoint.pt`
+and a final `result.json`. Checkpoints include raw weights, Adam, EMA, RNG states,
+the completed update and the next absolute sample address. Checkpoint writes
+are atomic and use self-contained lossless compression. SIGINT/SIGTERM finishes
+the current update and saves its complete endpoint.
+
+Resume into a new directory with the checkpoint digest recorded in `result.json`:
+
+```bash
+python train_streaming.py --config configs/current-training.json \
+  --manifest data/train.json --validation-manifest data/valid.json \
+  --resume runs/first/checkpoint.pt --sha256 EXPECTED_RECOVERY_SHA256 \
+  --output runs/resumed
+```
+
+Resume restores the optimizer and EMA instead of initializing them again. It
+requires matching config, manifest identities, root order, precision, device
+family and PyTorch build. Keep the same audio decoding, FFmpeg/Rubber Band and
+GPU/software environment too: these external dependencies can change numerical
+results and are not all captured by those identity checks. Historical XOR-packed
+research recoveries need their archived decoder and parent; see
+[provenance](provenance.md).
+
+## Export
+
+Export either checkpoint role to the fixed eight-state interface:
+
+```bash
+python scripts/export_streaming_model.py \
+  --checkpoint runs/first/checkpoint.pt --checkpoint-sha256 EXPECTED_RECOVERY_SHA256 \
+  --role ema --variant fp32 --output models/candidate.onnx
+```
+
+`--variant integer` applies the maintained 17-product integer deployment
+transforms. FP32 exports are compared with the native model; integer exports
+use an independently reconstructed integer arithmetic reference. Both compare
+audio and carried states before publishing the graph and its adjacent
+`.verification.json`. Numerical verification is not separation-quality or host
+timing qualification. New exports have their own hashes; they are not claimed
+to reproduce the released file byte for byte.
+
+## Evaluate
+
+Evaluation uses a separate, explicit excerpt manifest. Paths are relative to
+that JSON file. For example:
+
+```json
+{
+  "schema_version": 1,
+  "sample_rate": 44100,
+  "source_order": ["drums", "bass", "vocals", "other"],
+  "tracks": [{
+    "name": "held-out-song",
+    "mixture": "valid/song/mixture.wav",
+    "sources": {
+      "drums": "valid/song/drums.wav",
+      "bass": "valid/song/bass.wav",
+      "vocals": "valid/song/vocals.wav",
+      "other": "valid/song/other.wav"
+    },
+    "excerpts": [{"start_seconds": 30, "duration_seconds": 15}]
+  }]
+}
+```
+
+```bash
+python scripts/evaluate_streaming_model.py --manifest data/evaluation.json \
+  --checkpoint runs/first/checkpoint.pt --sha256 EXPECTED_RECOVERY_SHA256 \
+  --role ema --output runs/ema-scores.json
+python scripts/evaluate_streaming_model.py --manifest data/evaluation.json \
+  --onnx models/candidate.onnx --sha256 EXPECTED_ONNX_SHA256 \
+  --output runs/onnx-scores.json
+```
+
+Rendering starts at sample zero, carries all state continuously, accounts for
+the 128-sample output delay and uses actual future audio where available.
+Only EOF is zero-flushed. Reports preserve the current per-stem metrics and
+aggregation. Silent-only custom panels report unavailable primary scores as
+`null`. This evaluator measures offline quality, not real-time callback timing.

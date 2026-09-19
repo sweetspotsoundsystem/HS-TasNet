@@ -1,243 +1,79 @@
-<img src="./fig1.png" width="350px"></img>
+# HS-TasNet
 
-## HS-TasNet
+Stereo streaming music separation into **drums, bass, vocals and other**.
+The current model combines spectral and waveform branches, causal attention,
+and recurrent branch memories. It uses **1024-sample analysis, 256-sample
+synthesis, 128-sample hops and eight explicit FP32 states** at 44.1 kHz.
+The graph delays audio by 128 samples. StemgenRT's additional 128-sample worker
+queue gives 256 samples / 5.80 ms total algorithmic latency.
 
-Implementation of [HS-TasNet](https://arxiv.org/abs/2402.17701), "Real-time Low-latency Music Source Separation using Hybrid Spectrogram-TasNet", proposed by the research team at L-Acoustics
-
-## Pretrained streaming model
-
-The released model separates **stereo 44.1 kHz audio** into **Drums, Bass,
-Vocals and Other**. It combines spectrogram and waveform estimates with
-causal attention and eight recurrent states, using a 1024-sample analysis
-window, a 256-sample synthesis frame and a 128-sample hop. Its output is delayed by one hop (2.90 ms).
-[StemgenRT](https://github.com/sweetspotsoundsystem/stemgen-rt) adds asynchronous
-scheduling for DAW use: 256 samples / 5.80 ms total with a 128-sample host buffer.
-
-Install from this checkout and download the self-contained ONNX weights:
+## Run the released model
 
 ```bash
+python -m pip install -e '.[streaming]'
 python scripts/download_streaming_model.py
-pip install -e '.[streaming]'
-python examples/separate_streaming.py stereo-44100.wav stems --model models/hop128.onnx
+python examples/separate_streaming.py --help
 ```
-
-The example writes four floating-point WAVs with the original length and sample
-alignment. It requires stereo input already at 44.1 kHz and preserves its level.
 
 ```python
-import soundfile as sf
-from hs_tasnet.streaming import StreamingSeparator
+import numpy as np
+from hs_tasnet import StreamingSeparator
 
-audio, sample_rate = sf.read("stereo-44100.wav", dtype="float32", always_2d=True)
-separator = StreamingSeparator("models/hop128.onnx", sample_rate=sample_rate)
-stems = separator.separate(audio.T)  # [4, 2, samples]: drums, bass, vocals, other
+separator = StreamingSeparator("models/hop128.onnx")
+audio = np.zeros((2, 44100), dtype=np.float32)
+stems = separator.separate(audio)  # [4, 2, samples], aligned to the input
 ```
 
-For chunked integration, use `process_chunk`, `flush` and `reset`; see the
-[model interface](models/README.md). The Python API runs synchronously on CPU
-and allocates memory, so call it from a worker when integrating with playback.
-The default download matches StemgenRT 0.5.0: the integer model with fused
-attention projections, verified by size and SHA-256. The runtime uses one CPU
-thread and the same KleidiAI-disabled setting as the plugin. The user reports
-zero fallback in their M4 plugin test. Weights are not included in the Python
-wheel.
+The download is pinned by size and SHA-256 to the integer graph shared with
+[StemgenRT](https://github.com/sweetspotsoundsystem/stemgen-rt). ONNX Runtime
+1.26.0 runs on one CPU thread with KleidiAI disabled, matching that release's
+runtime settings. This Python API allocates memory and runs synchronously; use
+it from a worker for playback integration. See [model interface](models/README.md).
 
-## Current model training
+## Native model, training and export
 
-The current eight-state native model, training loop, data augmentation,
-weighted losses, Adam/EMA recovery, evaluation, monitoring and integer export
-code are included in `research/direct`. The production corpus helpers and
-active frozen recipe are included as well. The [current training guide](docs/current-training.md)
-maps the implementation and documents the original run's environment and
-checkpoint requirements. CI checks the native/released state contract,
-gradients, lossless restore and export parity. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for the source sync required with every model update.
-
-## Earlier four-state training baseline
-
-`StreamingHSTasNet` retains the earlier four-state FP32 architecture and its
-exact weight importer. Download that model with `--variant trainable`, then
-fine-tune on aligned stem WAVs, resume Adam checkpoints, and export a verified
-streaming ONNX model with the [training guide](docs/streaming-training.md).
-The current eight-state integer inference graph has a different architecture;
-it cannot be imported as this four-state training model.
+Install the desired CPU or CUDA build of PyTorch 2.8.0 first, then:
 
 ```bash
-pip install -e '.[streaming,onnx]'
-python scripts/download_streaming_model.py --variant trainable
-python scripts/import_streaming_weights.py --onnx models/hop128-trainable.onnx --output models/hop128-trainable.pt
+python -m pip install -e '.[training,onnx,test]'
 ```
 
 ```python
 import torch
-from hs_tasnet import StreamingHSTasNet
+from hs_tasnet import StreamingHSTasNet, render_scored_context
 
-model = StreamingHSTasNet.from_checkpoint("models/hop128-trainable.pt")
-stems = model.separate(torch.zeros(1, 2, 44100))  # aligned [1,4,2,44100]
+model = StreamingHSTasNet()  # Untrained weights; this does not load the release.
+audio = torch.randn(1, 2, 768) * .02
+scored = render_scored_context(model, audio, warmup_samples=256, carry_state=True)
+scored.raw.square().mean().backward()
 ```
 
-The original `HSTasNet` and `Trainer` API below remain available for the older
-configurable architecture. `HSTasNet()` and `StreamingHSTasNet()` both initialize
-untrained weights; use `StreamingHSTasNet.from_checkpoint` for the trainable
-baseline.
+The maintained package includes deterministic crop/pitch/remix augmentation,
+the whole-group weighted source-view objective, Adam and EMA, lossless complete
+recovery, native/ONNX evaluation and verified export. Read the
+[training and evaluation guide](docs/training.md) for checkpoint requirements,
+portable manifests, the four-second recipe and commands. Native FP32 training
+weights cannot be reconstructed losslessly from the released integer graph;
+provide an authenticated native checkpoint or explicitly start from scratch.
 
-## Install
+## Supported source
 
-```bash
-$ pip install HS-TasNet
-```
+| Module | Responsibility |
+| --- | --- |
+| `hs_tasnet.model` | Current native model, states and detached context |
+| `hs_tasnet.data` | Portable manifests and deterministic training augmentation |
+| `hs_tasnet.losses` | Whole-group objectives and one Adam/EMA update |
+| `hs_tasnet.checkpoint` | Native checkpoint authentication and complete recovery |
+| `hs_tasnet.trainer` | Portable finite training and resume |
+| `hs_tasnet.evaluation` | Physical alignment and per-stem metrics |
+| `hs_tasnet.export` | Current fixed-geometry ONNX export |
+| `hs_tasnet.streaming` | Released and checksum-pinned custom ONNX inference |
 
-## Usage
+Version 0.4 removes the original configurable `HSTasNet`, its trainer, and the
+earlier four-state model. `StreamingHSTasNet` now denotes only the current
+eight-state architecture. `research/` is ignored local experimentation; it is
+not required for imports, tests or distributions. The complete earlier source
+snapshot remains in git history; see [provenance and migration](docs/provenance.md).
 
-```python
-import torch
-from hs_tasnet import HSTasNet
-
-model = HSTasNet()
-
-audio = torch.randn(1, 2, 204800) # ~5 seconds of stereo
-
-separated_audios, _ = model(audio)
-
-assert separated_audios.shape == (1, 4, 2, 204800) # second dimension is the separated tracks
-```
-
-With the `Trainer`
-
-```python
-# model
-
-from hs_tasnet import HSTasNet, Trainer
-
-model = HSTasNet()
-
-# trainer
-
-trainer = Trainer(
-    model,
-    dataset = None,               # add your in-house Dataset
-    concat_musdb_dataset = True,  # concat the musdb dataset automatically
-    batch_size = 2,
-    max_steps = 2,
-    cpu = True,
-)
-
-trainer()
-
-# after much training
-# inferencing
-
-model.sounddevice_stream(
-    duration_seconds = 2,
-    return_reduced_sources = [0, 2]
-)
-
-# or from the exponentially smoothed model (in the trainer)
-
-trainer.ema_model.sounddevice_stream(...)
-
-# or you can load from a specific checkpoint
-
-model.load('./checkpoints/path.to.desired.ckpt.pt')
-model.sounddevice_stream(...)
-
-# to load an HS-TasNet from any of the saved checkpoints, without having to save its hyperparameters, just run
-
-model = HSTasNet.init_and_load_from('./checkpoints/path.to.desired.ckpt.pt')
-
-```
-
-## Training script
-
-First make sure dependencies are there by running
-
-```shell
-$ sh scripts/install.sh
-```
-
-Then make sure `uv` is installed
-
-```shell
-$ pip install uv
-```
-
-Finally run the following to train a newly initialized model on a small subset of MusDB, and make sure the loss goes down
-
-```shell
-$ uv run train.py
-```
-
-For distributed training, you just need to run `accelerate config` first, courtesy of [`accelerate` from 🤗](https://huggingface.co/docs/accelerate/en/index) but single machine is fine too
-
-## Experiment tracking
-
-To enable online experiment monitoring / tracking, you need to have `wandb` installed and logged in
-
-```shell
-$ pip install wandb && wandb login
-```
-
-Then
-
-```shell
-$ uv run train.py --use-wandb
-```
-
-To wipe the previous checkpoints and evaluated results, append `--clear-folders`
-
-
-## Alternative RNNs
-
-The architecture defaults to using PyTorch's `LSTM` (or `GRU`), but you can easily substitute it for any other module by passing an `rnn_klass` to the `HSTasNet` constructor, as long as it adheres to a specific interface (read `alternative_rnns.py`)
-
-For example, to use the [minGRU](https://github.com/lucidrains/minGRU-pytorch) architecture:
-
-```python
-import torch
-from hs_tasnet import HSTasNet
-from hs_tasnet.alternative_rnns import minGRUWrapper
-
-model = HSTasNet(rnn_klass = minGRUWrapper)
-
-audio = torch.randn(1, 2, 204800)
-separated_audios, _ = model(audio)
-```
-
-## Test
-
-```shell
-$ uv pip install '.[test]' --system
-```
-
-Then
-
-```shell
-$ pytest tests
-```
-
-## Sponsors
-
-This open sourced work is sponsored by [Sweet Spot](https://github.com/sweetspotsoundsystem)
-
-## Citations
-
-```bibtex
-@misc{venkatesh2024realtimelowlatencymusicsource,
-    title    = {Real-time Low-latency Music Source Separation using Hybrid Spectrogram-TasNet},
-    author   = {Satvik Venkatesh and Arthur Benilov and Philip Coleman and Frederic Roskam},
-    year     = {2024},
-    eprint   = {2402.17701},
-    archivePrefix = {arXiv},
-    primaryClass = {eess.AS},
-    url      = {https://arxiv.org/abs/2402.17701},
-}
-```
-
-```bibtex
-@inproceedings{Feng2024WereRA,
-    title   = {Were RNNs All We Needed?},
-    author  = {Leo Feng and Frederick Tung and Mohamed Osama Ahmed and Yoshua Bengio and Hossein Hajimirsadegh},
-    year    = {2024},
-    url     = {https://api.semanticscholar.org/CorpusID:273025630}
-}
-```
+The implementation builds on [HS-TasNet](https://arxiv.org/abs/2402.17701) and
+[Phil Wang's implementation](https://github.com/lucidrains/hs-tasnet).

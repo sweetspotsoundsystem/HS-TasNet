@@ -222,3 +222,7 @@ models/*.verification.json
 models/*-verification.json
 streaming-runs/
 verification-tmp/
+
+# Local research history, machine-specific experiments and generated run artifacts.
+/research/
+/runs/

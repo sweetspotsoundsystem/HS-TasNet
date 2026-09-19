@@ -13,19 +13,17 @@ import numpy as np
 
 _MODELS = json.loads(Path(__file__).with_name("streaming_models.json").read_text())
 MODEL_SHA256 = _MODELS["current"]["sha256"]
-TRAINABLE_MODEL_SHA256 = _MODELS["trainable"]["sha256"]
 SAMPLE_RATE = 44100
 HOP_SAMPLES = 128
 SOURCE_ORDER = ("drums", "bass", "vocals", "other")
-_STATE_FAMILIES = {name: {key: tuple(shape) for key, shape in model["states"].items()}
-                   for name, model in _MODELS.items()}
+_STATES = {name: tuple(shape) for name, shape in _MODELS["current"]["states"].items()}
 
 
 class StreamingSeparator:
     """Separate float32 audio at 44.1 kHz, preserving every recurrent state.
 
-    The default graph has eight states. Explicitly checksum-pinned four-state
-    training exports remain supported; states never cross model instances.
+    The model has eight states. Custom exports must use this same fixed
+    interface and an explicitly supplied checksum.
 
     ``process_chunk`` accepts [2, 128] and returns [4, 2, 128], aligned to
     the previous input hop. Its first result after reset is ``None``.
@@ -59,11 +57,9 @@ class StreamingSeparator:
             str(path), sess_options=options, providers=["CPUExecutionProvider"]
         )
         actual_inputs = {node.name: tuple(node.shape) for node in self._session.get_inputs()}
-        families = [states for states in _STATE_FAMILIES.values()
-                    if actual_inputs == {"audio_chunk": (1, 2, 128), **states}]
-        if len(families) != 1:
+        if actual_inputs != {"audio_chunk": (1, 2, 128), **_STATES}:
             raise ValueError("Model streaming interface differs")
-        self._state_shapes = families[0]
+        self._state_shapes = _STATES
         inputs = {"audio_chunk": (1, 2, 128), **self._state_shapes}
         outputs = {"separated_chunk": (1, 4, 2, 128)}
         outputs.update({"next_" + name: shape for name, shape in self._state_shapes.items()})

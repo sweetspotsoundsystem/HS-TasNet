@@ -1,21 +1,16 @@
-"""HS-TasNet training and streaming inference APIs.
+"""Current native training model and ONNX streaming inference APIs.
 
-Load training dependencies only when a training API is requested, so importing
-the ONNX streaming module does not initialize PyTorch or dataset libraries.
+PyTorch is loaded only when a native-model API is requested.
 """
-
 from importlib import import_module
 
-__all__ = ["HSTasNet", "Trainer", "MusDB18HQ", "StreamingHSTasNet", "StreamingState"]
+__all__ = ["StreamingSeparator", "StreamingHSTasNet", "StreamingState", "render_scored_context"]
 
 
 def __getattr__(name):
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    if name in ("StreamingHSTasNet", "StreamingState"):
-        module = ".streaming_model"
-    else:
-        module = ".hs_tasnet" if name == "HSTasNet" else ".trainer"
+    module = ".streaming" if name == "StreamingSeparator" else ".model"
     value = getattr(import_module(module, __name__), name)
     globals()[name] = value
     return value

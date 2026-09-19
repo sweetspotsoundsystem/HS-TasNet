@@ -48,35 +48,5 @@
         500
       ]
     }
-  },
-  "trainable": {
-    "filename": "hop128-trainable.onnx",
-    "url": "https://media.githubusercontent.com/media/sweetspotsoundsystem/stemgen-rt/f8fb3beb95f8a17f80e1c195964f9cf1c42f2cee/model/model.onnx",
-    "sha256": "b8574ac2e67bcd1df533e3fc7464c0659d4bfa6744cfbb4389c0967271594fe3",
-    "bytes": 111344465,
-    "states": {
-      "audio_history": [
-        1,
-        2,
-        896
-      ],
-      "fusion_hidden": [
-        2,
-        1,
-        1000
-      ],
-      "spectral_numerator_tail": [
-        1,
-        4,
-        2,
-        128
-      ],
-      "waveform_tail": [
-        1,
-        4,
-        2,
-        128
-      ]
-    }
   }
 }

@@ -1,0 +1,273 @@
+"""Training orchestration without running the large audio model on CPU."""
+from __future__ import annotations
+
+from dataclasses import asdict, replace
+import json
+import random
+import signal
+import threading
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+
+from hs_tasnet import trainer
+
+
+class TinyModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.tensor(.25))
+        self.register_buffer("fixed", torch.tensor(1.))
+
+
+class TinyEMA:
+    def __init__(self, model, *, decay):
+        self.updates = 0
+        self.decay = decay
+
+    def update(self, model, *, step):
+        assert step == self.updates + 1
+        self.updates = step
+
+
+def endpoint(step=0):
+    model = TinyModel()
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-5, foreach=False)
+    ema = TinyEMA(model, decay=.995)
+    for index in range(step):
+        optimizer.zero_grad(set_to_none=True)
+        model.weight.square().backward()
+        optimizer.step()
+        ema.update(model, step=index + 1)
+    return model, optimizer, ema
+
+
+@pytest.fixture
+def harness(monkeypatch):
+    config = trainer.TrainingConfig(steps=6, warmup=2, workers=0,
+                                    device="cpu", precision="fp32", data_start=320)
+    corpus = SimpleNamespace(sha256="training-bytes", tracks=("training-track",),
+                             root_weights={"recordings": 1.}, split="train")
+    calls = SimpleNamespace(indices=[], updates=[], saves=[], datasets=[], loads=[])
+
+    def manifest(path, **kwargs):
+        calls.loads.append((path, kwargs))
+        return corpus
+
+    class AddressedDataset(torch.utils.data.Dataset):
+        def __len__(self):
+            return calls.datasets[-1][2]
+
+        def __getitem__(self, index):
+            calls.indices.append(index)
+            return torch.full((2, 8), float(index)), torch.full((4, 2, 8), float(index))
+
+    def dataset(tracks, effective_config, final_index):
+        calls.datasets.append((tracks, effective_config, final_index))
+        return AddressedDataset()
+
+    def update(model, optimizer, ema, mixture, targets, *, step, **kwargs):
+        assert step == ema.updates + 1
+        assert all(state["step"].item() == step - 1 for state in optimizer.state.values())
+        calls.updates.append((step, optimizer.param_groups[0]["lr"], model, optimizer, ema))
+        optimizer.zero_grad(set_to_none=True)
+        model.weight.square().backward()
+        optimizer.step()
+        ema.update(model, step=step)
+        return {"step": step, "weighted_loss": float(model.weight.detach())}
+
+    def save(path, model, optimizer, ema, **kwargs):
+        assert kwargs["step"] == ema.updates
+        assert all(state["step"].item() == ema.updates for state in optimizer.state.values())
+        calls.saves.append(kwargs)
+        return {"path": str(path), "sha256": "saved-bytes", "step": kwargs["step"]}
+
+    monkeypatch.setattr(trainer, "load_manifest", manifest)
+    monkeypatch.setattr(trainer, "configure_determinism", lambda config: torch.device("cpu"))
+    monkeypatch.setattr(trainer, "StreamingHSTasNet", TinyModel)
+    monkeypatch.setattr(trainer, "ParameterEMA", TinyEMA)
+    monkeypatch.setattr(trainer, "make_dataset", dataset)
+    monkeypatch.setattr(trainer, "remix_batch", lambda mixture, targets, **kwargs:
+                        (mixture, targets, None, None))
+    monkeypatch.setattr(trainer, "batch_recipes", lambda config, first: [{"sample_index": first}])
+    monkeypatch.setattr(trainer, "grouped_update", update)
+    monkeypatch.setattr(trainer, "save_training_checkpoint", save)
+    return config, corpus, calls, update
+
+
+def test_learning_rate_uses_original_completed_update_schedule():
+    config = trainer.TrainingConfig()
+    assert trainer.learning_rate(0, config) == config.lr / config.warmup
+    assert trainer.learning_rate(config.warmup - 1, config) == config.lr
+    assert trainer.learning_rate(config.warmup, config) == pytest.approx(config.lr)
+    assert trainer.learning_rate(config.steps - 1, config) == config.min_lr
+    assert trainer.learning_rate(config.warmup + 1, config) < config.lr
+    with pytest.raises(ValueError):
+        trainer.learning_rate(config.steps, config)
+
+
+@pytest.mark.parametrize("changes", [
+    {"batch_size": 8}, {"microbatch_size": 17}, {"auxiliary_microbatch_size": 3},
+    {"crop_samples": 132224}, {"data_start": 1}, {"warmup": 2000}, {"min_lr": 1e-3},
+    {"device": "cpu", "precision": "bf16"}, {"root_weights": {"recordings": float("nan")}},
+])
+def test_config_rejects_incompatible_scientific_settings(changes):
+    with pytest.raises(ValueError):
+        replace(trainer.TrainingConfig(), **changes).validate()
+
+
+def test_fresh_stop_keeps_original_horizon_and_one_update_per_address(harness, tmp_path):
+    config, _, calls, _ = harness
+    result = trainer.train(config, "train.json", tmp_path / "run", stop_after=2)
+    assert result["step"] == 2 and result["schedule_steps"] == 6
+    assert calls.loads == [("train.json", {"expected_split": "train"})]
+    assert calls.indices == list(range(320, 352))
+    assert [row[:2] for row in calls.updates] == [
+        (1, trainer.learning_rate(0, config)), (2, trainer.learning_rate(1, config))]
+    assert len(calls.saves) == 1
+    assert calls.saves[0]["step"] == 2 and calls.saves[0]["next_sample_index"] == 352
+    assert calls.saves[0]["config"]["steps"] == 6
+    assert calls.saves[0]["data_identity"] == {
+        "manifest_sha256": "training-bytes", "sampling_root_order": ["recordings"]}
+    rows = [json.loads(line) for line in (tmp_path / "run/metrics.jsonl").read_text().splitlines()]
+    assert [row["first_sample_index"] for row in rows] == [320, 336]
+
+
+def test_resume_uses_restored_objects_cursor_identities_and_rng(harness, monkeypatch, tmp_path):
+    config, corpus, calls, _ = harness
+    model, optimizer, ema = endpoint(2)
+    expected_config = asdict(replace(config, root_weights=corpus.root_weights))
+    before_python, before_numpy, before_torch = random.getstate(), np.random.get_state(), torch.get_rng_state()
+    generator = torch.Generator().manual_seed(173)
+    resumed_torch = generator.get_state()
+    expected_next_torch = torch.rand(3, generator=generator)
+    local_python = random.Random(193)
+    resumed_python, expected_next_python = local_python.getstate(), local_python.random()
+    local_numpy = np.random.RandomState(197)
+    resumed_numpy, expected_next_numpy = local_numpy.get_state(), local_numpy.rand()
+
+    def restore(path, **kwargs):
+        assert path == "previous.pt"
+        assert kwargs == {"sha256": "previous-bytes", "config": expected_config,
+                          "data_identity": {"manifest_sha256": "training-bytes",
+                                            "sampling_root_order": ["recordings"]},
+                          "device": torch.device("cpu"), "precision": "fp32", "restore_rng": True}
+        torch.set_rng_state(resumed_torch)
+        random.setstate(resumed_python)
+        np.random.set_state(resumed_numpy)
+        return SimpleNamespace(model=model, optimizer=optimizer, ema=ema,
+                               step=2, next_sample_index=352)
+
+    monkeypatch.setattr(trainer, "load_training_checkpoint", restore)
+    monkeypatch.setattr(trainer, "ParameterEMA", lambda *args, **kwargs:
+                        pytest.fail("Resume must retain the saved EMA"))
+    try:
+        result = trainer.train(config, "train.json", tmp_path / "resumed", resume="previous.pt",
+                               sha256="previous-bytes", stop_after=4)
+        assert calls.indices == list(range(352, 384))
+        assert [row[:2] for row in calls.updates] == [
+            (3, trainer.learning_rate(2, config)), (4, trainer.learning_rate(3, config))]
+        assert all(row[2:] == (model, optimizer, ema) for row in calls.updates)
+        assert ema.updates == 4 and result["resumed_from_step"] == 2
+        assert result["next_sample_index"] == 384
+        # Constructing/iterating the DataLoader must not consume restored RNG.
+        assert torch.equal(torch.rand(3), expected_next_torch)
+        assert random.random() == expected_next_python
+        assert np.random.rand() == expected_next_numpy
+    finally:
+        random.setstate(before_python)
+        np.random.set_state(before_numpy)
+        torch.set_rng_state(before_torch)
+
+
+def test_resume_rejects_inconsistent_cursor_before_creating_run(harness, monkeypatch, tmp_path):
+    config, _, calls, _ = harness
+    model, optimizer, ema = endpoint(2)
+    monkeypatch.setattr(trainer, "load_training_checkpoint", lambda *args, **kwargs:
+                        SimpleNamespace(model=model, optimizer=optimizer, ema=ema,
+                                        step=2, next_sample_index=351))
+    output = tmp_path / "wrong-cursor"
+    with pytest.raises(ValueError, match="cursor"):
+        trainer.train(config, "train.json", output, resume="previous.pt", sha256="previous-bytes")
+    assert not output.exists() and not calls.updates and not calls.saves
+
+
+def test_resume_identity_keeps_sampler_root_order(harness, monkeypatch, tmp_path):
+    config, _, calls, _ = harness
+    config = replace(config, root_weights={"second": .5, "first": .5})
+
+    def restore(path, **kwargs):
+        # Canonical JSON hashes alone cannot distinguish the two dict orders.
+        assert kwargs["config"]["root_weights"] == {"first": .5, "second": .5}
+        assert kwargs["data_identity"]["sampling_root_order"] == ["second", "first"]
+        raise ValueError("Training data identity changed")
+
+    monkeypatch.setattr(trainer, "load_training_checkpoint", restore)
+    output = tmp_path / "wrong-order"
+    with pytest.raises(ValueError, match="identity"):
+        trainer.train(config, "train.json", output, resume="previous.pt", sha256="previous-bytes")
+    assert not output.exists() and not calls.updates
+
+
+def test_validation_split_disjointness_and_identity_are_bound(harness, monkeypatch, tmp_path):
+    from hs_tasnet import data
+    config, corpus, calls, _ = harness
+    validation = SimpleNamespace(sha256="validation-bytes", tracks=("validation-track",), split="valid")
+    checks = []
+
+    def manifest(path, **kwargs):
+        calls.loads.append((path, kwargs))
+        return corpus if path == "train.json" else validation
+
+    monkeypatch.setattr(trainer, "load_manifest", manifest)
+    monkeypatch.setattr(data, "require_disjoint", lambda train, valid: checks.append((train, valid)))
+    trainer.train(config, "train.json", tmp_path / "validated", validation_manifest="valid.json", stop_after=1)
+    assert calls.loads == [("train.json", {"expected_split": "train"}),
+                           ("valid.json", {"expected_split": "valid"})]
+    assert checks == [(corpus.tracks, validation.tracks)]
+    assert calls.saves[0]["data_identity"]["validation_manifest_sha256"] == "validation-bytes"
+
+
+def test_signal_during_update_saves_only_complete_adam_ema_endpoint(harness, monkeypatch, tmp_path):
+    config, _, calls, original_update = harness
+    handlers, installs = {}, []
+    previous = {signal.SIGTERM: object(), signal.SIGINT: object()}
+
+    def install(sig, handler):
+        old = handlers.get(sig, previous[sig])
+        handlers[sig] = handler
+        installs.append((sig, handler))
+        return old
+
+    def update(*args, **kwargs):
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(trainer.signal, "signal", install)
+    monkeypatch.setattr(trainer, "grouped_update", update)
+    result = trainer.train(config, "train.json", tmp_path / "interrupted")
+    assert result["status"] == "interrupted" and result["step"] == 1
+    assert len(calls.updates) == len(calls.saves) == 1
+    assert calls.saves[0]["step"] == 1 and calls.saves[0]["next_sample_index"] == 336
+    assert handlers == previous and len(installs) == 4
+
+
+def test_threaded_library_call_does_not_install_signal_handlers(harness, monkeypatch, tmp_path):
+    config, _, calls, _ = harness
+    monkeypatch.setattr(trainer.signal, "signal", lambda *args: pytest.fail("Background signal handler"))
+    outcome = []
+
+    def run():
+        try:
+            outcome.append(trainer.train(config, "train.json", tmp_path / "thread", stop_after=1))
+        except BaseException as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert len(outcome) == 1 and isinstance(outcome[0], dict), outcome
+    assert outcome[0]["step"] == 1 and len(calls.saves) == 1

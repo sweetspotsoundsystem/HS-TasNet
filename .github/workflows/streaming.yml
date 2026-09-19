@@ -18,16 +18,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install inference test dependencies
-        run: python -m pip install numpy==2.2.6 onnxruntime==1.26.0 pytest soundfile
-      - name: Download and verify the released model
+      - name: Install inference dependencies without PyTorch
+        run: python -m pip install -e '.[streaming,test]' numpy==2.2.6
+      - name: Download and authenticate the released model
         run: python scripts/download_streaming_model.py
       - name: Check independent waveform parity and streaming lifecycle
         run: python -m pytest tests/test_streaming.py tests/test_download_streaming_model.py -q
 
-  training:
+  pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CUDA_VISIBLE_DEVICES: ''
       OMP_NUM_THREADS: '1'
@@ -38,40 +38,53 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install CPU training and export dependencies
-        run: |
-          python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install numpy==2.2.6 onnx==1.19.1 onnxruntime==1.26.0 pytest soundfile
-          python -m pip install -e . --no-deps
-      - name: Download and import the released weights
-        run: |
-          python scripts/download_streaming_model.py --variant trainable
-          python scripts/import_streaming_weights.py
-      - name: Check model, loss, exact Adam resume and ONNX export
-        run: python -m pytest tests/test_streaming_model.py tests/test_streaming_training.py tests/test_streaming_export.py -q
-
-  current-training:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      CUDA_VISIBLE_DEVICES: ''
-      OMP_NUM_THREADS: '1'
-      MKL_NUM_THREADS: '1'
-      OPENBLAS_NUM_THREADS: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install current model and export dependencies on CPU
+      - name: Install CPU training, export and audio dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libportaudio2
-          python -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install -e '.[streaming,onnx,test]' numpy==2.2.6 onnx==1.19.1 torchcodec==0.6.0
-      - name: Verify full source snapshot and download the current release
+          sudo apt-get install -y ffmpeg
+          ffmpeg -hide_banner -filters | grep rubberband
+          python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e '.[streaming,training,onnx,test]' numpy==2.2.6 onnx==1.19.1 build
+      - name: Download the current release
+        run: python scripts/download_streaming_model.py
+      - name: Check model, losses, data, recovery, export and evaluation
+        run: python scripts/run_cpu_tests.py -q
+      - name: Build distributions and reject archived code
         run: |
-          python scripts/sync_research.py
-          python scripts/download_streaming_model.py
-      - name: Check current architecture, gradients, exact packed recovery and export
-        run: python scripts/run_cpu_tests.py tests/test_current_research.py tests/test_recovery_lineage.py tests/test_export_onnx.py tests/test_cpu_test_runner.py -q
+          python -m build
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+          for path in Path('dist').iterdir():
+              if path.suffix == '.whl':
+                  with zipfile.ZipFile(path) as archive:
+                      names = archive.namelist()
+              else:
+                  with tarfile.open(path) as archive:
+                      names = archive.getnames()
+              forbidden = {'research', 'runs', 'hs_tasnet.py', 'streaming_model.py',
+                           'streaming_trainer.py', 'export_onnx.py', 'sync_research.py'}
+              assert not any(forbidden.intersection(Path(name).parts) for name in names), path
+              assert not any(name.endswith(('.pt', '.onnx')) for name in names), path
+          PY
+      - name: Verify installed wheel outside the source checkout
+        run: |
+          python -m pip uninstall -y HS-TasNet
+          python -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -I - <<'PY'
+          import sys
+          import hs_tasnet
+          assert 'site-packages' in hs_tasnet.__file__
+          assert 'torch' not in sys.modules
+          import torch
+          from hs_tasnet import StreamingHSTasNet, StreamingSeparator
+          from hs_tasnet import checkpoint, data, losses, trainer, evaluation, export
+          torch.set_num_threads(1)
+          model = StreamingHSTasNet().eval()
+          with torch.no_grad():
+              output, state = model.forward_chunk(torch.zeros(1, 2, 128), model.initial_state(1))
+          assert output.shape == (1, 4, 2, 128)
+          assert not any(name.startswith('research') for name in sys.modules)
+          PY

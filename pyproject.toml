@@ -1,108 +1,47 @@
 [project]
 name = "HS-TasNet"
-version = "0.3.2"
-description = "HS TasNet"
-authors = [
-    { name = "Phil Wang", email = "lucidrains@gmail.com" }
-]
+version = "0.4.0"
+description = "Eight-state streaming music separation, training and export"
+authors = [{ name = "Phil Wang", email = "lucidrains@gmail.com" }]
 readme = "README.md"
-requires-python = ">= 3.9"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
-keywords = [
-    'artificial intelligence',
-    'deep learning',
-    'music separation',
-    'real time'
+keywords = ["music separation", "streaming", "deep learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
 ]
-
-classifiers=[
-    'Development Status :: 4 - Beta',
-    'Intended Audience :: Developers',
-    'Topic :: Scientific/Engineering :: Artificial Intelligence',
-    'License :: OSI Approved :: MIT License',
-    'Programming Language :: Python :: 3.9',
-]
-
-dependencies = [
-    "accelerate>=1.10.0",
-    "einx>=0.3.0",
-    "einops>=0.8.1",
-    "ema-pytorch",
-    "librosa",
-    "loguru",
-    "matplotlib",
-    "minGRU-pytorch",
-    "musdb",
-    "sounddevice",
-    "soundfile",
-    "torch>=2.8",
-    "torchaudio",
-    "torchcodec",
-]
+dependencies = ["numpy>=1.26"]
 
 [project.urls]
-Homepage = "https://pypi.org/project/hs-tasnet/"
-Repository = "https://github.com/lucidrains/hs-tasnet"
+Repository = "https://github.com/sweetspotsoundsystem/HS-TasNet"
 
 [project.optional-dependencies]
-streaming = [
-    "numpy>=1.26",
-    "onnxruntime==1.26.0",
-]
+streaming = ["onnxruntime==1.26.0", "soundfile>=0.12"]
+training = ["torch==2.8.0", "soundfile>=0.12"]
+onnx = ["torch==2.8.0", "onnx==1.19.1", "onnxruntime==1.26.0"]
+test = ["pytest>=8"]
 
-onnx = [
-    "onnxruntime>=1.20.1",
-    "onnx>=1.19.1",
-    "onnxscript>=0.5.7",
-]
-
-test = [
-    "pytest"
-]
+[project.scripts]
+hs-tasnet-train = "hs_tasnet.trainer:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [
-    "."
-]
+pythonpath = ["."]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.rye]
-managed = true
-dev-dependencies = []
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["hs_tasnet"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "hs_tasnet",
-    "README.md",
-    "LICENSE",
-    "pyproject.toml",
-    "docs/streaming-training.md",
-    "docs/current-training.md",
-    "CONTRIBUTING.md",
-    "AGENTS.md",
-    "research",
-    "export_onnx.py",
-    "scripts/sync_research.py",
-    "scripts/run_cpu_tests.py",
-    "tests/test_current_research.py",
-    "tests/test_cpu_test_runner.py",
-    "tests/test_export_onnx.py",
-    "configs",
-    "train_streaming.py",
-    "scripts/build_streaming_manifest.py",
-    "scripts/import_streaming_weights.py",
-    "scripts/export_streaming_model.py",
-    "scripts/download_streaming_model.py",
-    "models/README.md",
-    "examples/separate_streaming.py",
+    "hs_tasnet", "README.md", "LICENSE", "pyproject.toml", "docs", "CONTRIBUTING.md",
+    "AGENTS.md", "configs", "scripts", "tests", "models/README.md", "examples", "train_streaming.py",
 ]
+exclude = ["research", "runs", "models/*.onnx", "models/*.pt", "**/__pycache__", "**/*.pyc"]
