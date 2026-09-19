@@ -67,6 +67,22 @@ multiple of 16. A small CPU experiment needs `device="cpu"`, `precision="fp32"`
 and typically `workers=0`; the trainer still requires the full crop and batch
 geometry. Reducing the stopping point does not shorten the configured schedule.
 
+### Primary SDR ablation
+
+`configs/primary-sdr-ablation.json` keeps the same recipe and adds
+`extra_ordinary_primary_sdr_weight=0.2`. This increases the ordinary primary
+negative-SDR coefficient from 0.2 to 0.4. The absence coefficient stays 0.1,
+the relative raw-head anchor stays 0.01, and the auxiliary source-view loss
+keeps its existing joint reduction and weights. The inference graph and
+algorithmic latency are unchanged.
+
+This is an experimental training option; improved separation quality has not
+been established. Compare new runs from the same native checkpoint, data
+addresses and schedule. Select this configuration when starting a fresh
+Adam/EMA run. Its coefficient is saved in checkpoint configuration and cannot
+change during exact resume. The default is zero additional weight; baseline
+configuration serialization remains compatible with existing checkpoints.
+
 ## Start and resume
 
 The released integer ONNX graph is sufficient for inference. It cannot recover

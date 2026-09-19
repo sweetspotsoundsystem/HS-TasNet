@@ -140,7 +140,8 @@ def test_silence_and_auxiliary_input_validation():
         losses.auxiliary_objective(raw.flip(0), deployed.flip(0), targets.flip(0), mixture.flip(0))
 
 
-def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch):
+@pytest.mark.parametrize("extra", [0., .2], ids=["baseline", "primary_sdr_ablation"])
+def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, extra):
     """Compare replay to an independently retained tiny neural graph.
 
     This isolates the accumulation protocol without a costly full-size model;
@@ -185,7 +186,8 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch):
         result = render(model, audio, warmup_samples=128, carry_state=True)
         reference_coordinates[group] = last_coordinates
         reference_loss = reference_loss + coefficient * objective(
-            result.raw, result.deployed, truth[..., 128:], audio[..., 128:]).total
+            result.raw, result.deployed, truth[..., 128:], audio[..., 128:],
+            **({"extra_ordinary_primary_sdr_weight": extra} if group == "ordinary" else {})).total
     expected = torch.autograd.grad(reference_loss, tuple(model.parameters()))
 
     def compare_capture_coordinates(phase, group, offset):
@@ -195,13 +197,44 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch):
 
     rows = losses.accumulate_groups(model, mixture, targets, warmup_samples=128,
                                    ordinary_microbatch=4, auxiliary_microbatch=1,
-                                   verify_input_gradients=True, progress=compare_capture_coordinates)
+                                   verify_input_gradients=True, progress=compare_capture_coordinates,
+                                   extra_ordinary_primary_sdr_weight=extra)
     for parameter, reference in zip(model.parameters(), expected, strict=True):
         torch.testing.assert_close(parameter.grad, reference, atol=1e-6, rtol=1e-5)
     assert abs(sum(row["weighted_loss"] for row in rows.values()) - float(reference_loss.detach())) < 3e-6
     assert all(row["replay_outputs_bit_exact"] for row in rows.values())
     assert all(row["whole_group_objective_evaluations"] == 1 for row in rows.values())
     assert rows["auxiliary"]["view_contribution_multipliers"] == [1., .25]
+
+
+@pytest.mark.parametrize("silent", [False, True])
+def test_primary_sdr_increment_preserves_absence_anchor_and_partial_tail(silent):
+    raw, deployed, targets, mixture = source_fixture(silent=silent)
+    baseline = losses.objective(raw, deployed, targets, mixture)
+    candidate = losses.objective(raw, deployed, targets, mixture, extra_ordinary_primary_sdr_weight=.2)
+    # Independently construct the active full-window metric, without using
+    # direct_sdr() or the candidate's exposed component value.
+    truth = targets[..., :88200].reshape(2, 4, 2, 2, 44100)
+    estimate = deployed[..., :88200].reshape(2, 4, 2, 2, 44100)
+    signal = truth.square().sum((2, 4))
+    active = signal / 88200 > 1e-5
+    count = active.sum((0, 2))
+    db = (10 * torch.log10(((estimate - truth).square().sum((2, 4)) + 1e-12)
+                          / (signal + 1e-12))).clamp(-60, 60)
+    primary = (torch.where(active, db, 0).sum((0, 2)) / count.clamp_min(1)).sum()
+    primary = primary / (count > 0).sum().clamp_min(1)
+    expected = baseline.total + .2 * primary
+    torch.testing.assert_close(candidate.total, expected, atol=1e-6, rtol=0)
+    for actual, reference in zip(torch.autograd.grad(candidate.total, (raw, deployed)),
+                                torch.autograd.grad(expected, (raw, deployed), retain_graph=True), strict=True):
+        torch.testing.assert_close(actual, reference, atol=1e-7, rtol=1e-4)
+    increment_gradient, = torch.autograd.grad(primary, deployed)
+    assert torch.count_nonzero(increment_gradient[..., 88200:]) == 0
+    assert torch.count_nonzero(increment_gradient[0, 2]) == 0
+    for field in ("direct_sdr_loss", "absence_db", "direct_raw_anchor", "reconstruction_loss"):
+        assert torch.equal(getattr(candidate, field), getattr(baseline, field))
+    assert losses.policy()["direct_sdr_weight"] == .2
+    assert losses.policy(extra_ordinary_primary_sdr_weight=.2)["ordinary_primary_sdr_weight"] == .4
 
 
 @pytest.mark.parametrize("stop_group", ["ordinary", "auxiliary"])

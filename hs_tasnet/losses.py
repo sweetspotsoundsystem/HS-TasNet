@@ -151,16 +151,27 @@ class BlendedLoss:
     direct_raw_anchor: torch.Tensor
 
 
-def objective(raw, deployed, targets, mixture):
+def _extra_primary_weight(value):
+    if type(value) not in (float, int) or value not in (0., .2):
+        raise ValueError("extra_ordinary_primary_sdr_weight must be 0 or 0.2")
+    return float(value)
+
+
+def objective(raw, deployed, targets, mixture, *, extra_ordinary_primary_sdr_weight=0.):
     """Both summands carry gradients; the coefficient is fixed before training.
 
     Reconstruction is wave L1 + .25 complex-STFT + .25 raw-head L1.
     The direct term is negative scale-dependent SDR + .5 absence + .05
     window-normalized raw-head L1. Inference and evaluation are unchanged.
+    The optional .2 increment applies only to primary SDR; the absence and
+    raw-anchor coefficients and the auxiliary objective retain their weights.
     """
+    extra = _extra_primary_weight(extra_ordinary_primary_sdr_weight)
     base = reconstruction(raw, deployed, targets, mixture)
     direct = direct_sdr(raw, deployed, targets, mixture)
     total = base.total + SDR_WEIGHT * direct.total
+    if extra:
+        total = total + extra * direct.negative_sdr_db
     if not bool(torch.isfinite(total)):
         raise FloatingPointError("Nonfinite blended reconstruction/SDR loss")
     return BlendedLoss(total, base.waveform, base.spectral, base.raw_anchor,
@@ -319,8 +330,9 @@ def auxiliary_objective(raw, deployed, targets, mixture, *, weights=VIEW_WEIGHTS
     return WeightedAuxiliaryLoss(total, reduction.active, reduction.absent, unweighted, weighted)
 
 
-def policy():
-    return {"version": VERSION, "loss": "Unchanged ordinary16 plus 0.1 joint source-view2 with view multipliers [1,0.25]",
+def policy(*, extra_ordinary_primary_sdr_weight=0.):
+    extra = _extra_primary_weight(extra_ordinary_primary_sdr_weight)
+    result = {"version": VERSION, "loss": "Unchanged ordinary16 plus 0.1 joint source-view2 with view multipliers [1,0.25]",
             "ordinary_examples": 16, "auxiliary_examples": 2, "auxiliary_weight": AUXILIARY_WEIGHT,
             "view_indices": list(VIEW_INDICES), "view_weights": list(VIEW_WEIGHTS),
             "direct_sdr_weight": SDR_WEIGHT,
@@ -330,11 +342,19 @@ def policy():
             "replay_outputs": "Require bit-exact raw and deployed outputs before every backward",
             "optimizer": "Clear gradients once, complete both groups, clip once, Adam once, EMA once",
             "inference_changed": False, "extra_forward_pass_per_update": True}
+    if extra:
+        result.update(version="whole-group-primary-sdr-two-fifths-v1",
+            loss="Ordinary primary SDR weight .4; unchanged .1 joint source-view loss with weights [1,.25]",
+            ordinary_primary_sdr_weight=.4, extra_ordinary_primary_sdr_weight=extra)
+    return result
 
 
 def accumulate_group(model, mixture, targets, *, group, microbatch, warmup_samples,
-                     check_continue=None, verify_input_gradients=False, progress=None):
+                     check_continue=None, verify_input_gradients=False, progress=None,
+                     extra_ordinary_primary_sdr_weight=0.):
     from .model import render_scored_context
+
+    extra = _extra_primary_weight(extra_ordinary_primary_sdr_weight)
 
     _require(group in ("ordinary", "auxiliary") and len(mixture) == (16 if group == "ordinary" else 2),
             "Require a complete named source group")
@@ -356,7 +376,8 @@ def accumulate_group(model, mixture, targets, *, group, microbatch, warmup_sampl
     raw, deployed = (torch.cat(values).requires_grad_() for values in captured)
     del captured
     loss_function = objective if group == "ordinary" else auxiliary_objective
-    terms = loss_function(raw, deployed, targets[..., warmup_samples:], mixture[..., warmup_samples:])
+    ordinary_options = {"extra_ordinary_primary_sdr_weight": extra} if group == "ordinary" else {}
+    terms = loss_function(raw, deployed, targets[..., warmup_samples:], mixture[..., warmup_samples:], **ordinary_options)
     value = terms.total if group == "ordinary" else AUXILIARY_WEIGHT * terms.total
     loss = float(value.detach())
     details = {}
@@ -399,7 +420,7 @@ def accumulate_group(model, mixture, targets, *, group, microbatch, warmup_sampl
 
 def accumulate_groups(model, mixture_cpu, targets_cpu, *, warmup_samples, ordinary_microbatch=4,
                       auxiliary_microbatch=2, check_continue=None, after_group=None,
-                      verify_input_gradients=False, progress=None):
+                      verify_input_gradients=False, progress=None, extra_ordinary_primary_sdr_weight=0.):
     auxiliary_mix, auxiliary_targets = source_views(mixture_cpu, targets_cpu)
     device = next(model.parameters()).device
     inputs = {"ordinary": (mixture_cpu.to(device), targets_cpu.to(device)),
@@ -409,7 +430,8 @@ def accumulate_groups(model, mixture_cpu, targets_cpu, *, warmup_samples, ordina
     for group, microbatch in (("ordinary", ordinary_microbatch), ("auxiliary", auxiliary_microbatch)):
         row = accumulate_group(model, *inputs[group], group=group, microbatch=microbatch,
             warmup_samples=warmup_samples, check_continue=check_continue,
-            verify_input_gradients=verify_input_gradients, progress=progress)
+            verify_input_gradients=verify_input_gradients, progress=progress,
+            extra_ordinary_primary_sdr_weight=extra_ordinary_primary_sdr_weight)
         reduction = getattr(groups, group)
         _require(row["active_windows"] == reduction.active.cpu().tolist()
                 and row["absent_windows"] == reduction.absent.cpu().tolist(), "Canonical group activity differs")
@@ -421,7 +443,7 @@ def accumulate_groups(model, mixture_cpu, targets_cpu, *, warmup_samples, ordina
 
 def _grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
                    warmup_samples, ordinary_microbatch=4, auxiliary_microbatch=2,
-                   check_continue=None, after_group=None):
+                   check_continue=None, after_group=None, extra_ordinary_primary_sdr_weight=0.):
     """Accumulate both independently normalized groups, then clip/update once.
 
     Optional callbacks run only before the final update, and may raise to stop
@@ -431,6 +453,7 @@ def _grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
     """
     from .checkpoint import ParameterEMA, state_sha256
 
+    extra = _extra_primary_weight(extra_ordinary_primary_sdr_weight)
     parameters = list(model.parameters())
     _require(type(ema) is ParameterEMA and type(step) is int and step == ema.updates + 1,
             "Grouped update must follow the contiguous EMA endpoint")
@@ -451,7 +474,7 @@ def _grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
     optimizer.zero_grad(set_to_none=True)
     rows = accumulate_groups(model, mixture_cpu, targets_cpu, warmup_samples=warmup_samples,
         ordinary_microbatch=ordinary_microbatch, auxiliary_microbatch=auxiliary_microbatch,
-        check_continue=check_continue, after_group=after_group)
+        check_continue=check_continue, after_group=after_group, extra_ordinary_primary_sdr_weight=extra)
     gradient_norms = {}
     for name, parameter in model.named_parameters():
         _require(parameter.grad is not None and bool(torch.isfinite(parameter.grad).all()),
@@ -468,13 +491,14 @@ def _grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
     _require(ema.updates == step and len(optimizer.state) == 40
             and all(state["step"].item() == step for state in optimizer.state.values()),
             "Grouped update advanced Adam or EMA incorrectly")
-    return {"step": step, "accumulation_policy": policy(), "groups": rows, "weighted_loss": sum(r["weighted_loss"] for r in rows.values()),
+    return {"step": step, "accumulation_policy": policy(extra_ordinary_primary_sdr_weight=extra), "groups": rows, "weighted_loss": sum(r["weighted_loss"] for r in rows.values()),
             "gradient_norm_before_clip": float(norm), "parameter_gradient_norms": gradient_norms, **endpoint}
 
 
 def grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
                    warmup_samples, ordinary_microbatch=4, auxiliary_microbatch=2,
-                   check_continue=None, after_group=None, share_gru_weights=True):
+                   check_continue=None, after_group=None, share_gru_weights=True,
+                   extra_ordinary_primary_sdr_weight=0.):
     """Complete both loss groups, then clip, advance Adam and update EMA once.
 
     CUDA BF16 replay shares exactly equal saved GRU transposes by default.
@@ -493,4 +517,4 @@ def grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
         return _grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, step=step,
             warmup_samples=warmup_samples, ordinary_microbatch=ordinary_microbatch,
             auxiliary_microbatch=auxiliary_microbatch, check_continue=check_continue,
-            after_group=after_group)
+            after_group=after_group, extra_ordinary_primary_sdr_weight=extra_ordinary_primary_sdr_weight)

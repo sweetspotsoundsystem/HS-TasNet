@@ -96,6 +96,9 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path):
                                  data_identity={**data, "manifest_sha256": "c" * 64})
     with pytest.raises(ValueError, match="configuration"):
         load_training_checkpoint(path, config={**config, "lr": 1e-3}, data_identity=data)
+    with pytest.raises(ValueError, match="configuration"):
+        load_training_checkpoint(path, config={**config, "extra_ordinary_primary_sdr_weight": .2},
+                                 data_identity=data)
     restored = load_training_checkpoint(path, sha256=bound["sha256"], config=config, data_identity=data)
     assert restored.step == 1 and restored.next_sample_index == 401 and restored.metadata == {"note": "test"}
     assert state_sha256(restored.model.state_dict()) == saved_raw

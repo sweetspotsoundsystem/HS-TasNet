@@ -112,6 +112,8 @@ def test_learning_rate_uses_original_completed_update_schedule():
     {"batch_size": 8}, {"microbatch_size": 17}, {"auxiliary_microbatch_size": 3},
     {"crop_samples": 132224}, {"data_start": 1}, {"warmup": 2000}, {"min_lr": 1e-3},
     {"device": "cpu", "precision": "bf16"}, {"root_weights": {"recordings": float("nan")}},
+    {"extra_ordinary_primary_sdr_weight": -.2}, {"extra_ordinary_primary_sdr_weight": float("nan")},
+    {"extra_ordinary_primary_sdr_weight": .4}, {"extra_ordinary_primary_sdr_weight": True},
 ])
 def test_config_rejects_incompatible_scientific_settings(changes):
     with pytest.raises(ValueError):
@@ -139,6 +141,7 @@ def test_resume_uses_restored_objects_cursor_identities_and_rng(harness, monkeyp
     config, corpus, calls, _ = harness
     model, optimizer, ema = endpoint(2)
     expected_config = asdict(replace(config, root_weights=corpus.root_weights))
+    expected_config.pop("extra_ordinary_primary_sdr_weight")  # Legacy baseline checkpoint identity.
     before_python, before_numpy, before_torch = random.getstate(), np.random.get_state(), torch.get_rng_state()
     generator = torch.Generator().manual_seed(173)
     resumed_torch = generator.get_state()
@@ -180,6 +183,21 @@ def test_resume_uses_restored_objects_cursor_identities_and_rng(harness, monkeyp
         random.setstate(before_python)
         np.random.set_state(before_numpy)
         torch.set_rng_state(before_torch)
+
+
+def test_primary_sdr_option_reaches_updates_and_checkpoint_config(harness, monkeypatch, tmp_path):
+    config, _, calls, original = harness
+    config = replace(config, extra_ordinary_primary_sdr_weight=.2)
+    observed = []
+    def update(*args, **kwargs):
+        observed.append(kwargs["extra_ordinary_primary_sdr_weight"])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(trainer, "grouped_update", update)
+    trainer.train(config, "train.json", tmp_path / "candidate", stop_after=2)
+    assert observed == [.2, .2]
+    assert calls.saves[0]["config"]["extra_ordinary_primary_sdr_weight"] == .2
+    saved_config = json.loads((tmp_path / "candidate/config.json").read_text())
+    assert saved_config["extra_ordinary_primary_sdr_weight"] == .2
 
 
 def test_resume_rejects_inconsistent_cursor_before_creating_run(harness, monkeypatch, tmp_path):

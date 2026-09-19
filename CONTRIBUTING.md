@@ -43,3 +43,27 @@ reference.
 CPU tests do not establish separation quality, CUDA resource use or real-time
 host performance. Changes to training precision, data recipes or deployment
 arithmetic need their respective quality and hardware qualification.
+
+## Comparing a research port
+
+Use `scripts/sync_research.py` to record the live source inventory and the
+portable working files before publishing an intentional port. This comparison
+command replaces the historical copy operation; it does not restore the
+research snapshot. Supply the actual active plan and production helpers:
+
+```bash
+python scripts/sync_research.py --write \
+  --source-root /path/to/live-research \
+  --production-root /path/to/production-helpers \
+  --active-plan /path/to/live-research/active-plan.json \
+  --manifest /allocated/local-review/source-comparison.json
+```
+
+Inspect the local manifest, run the current research integration checks and
+portable training/export/inference suite, and repeat the command without
+`--write` immediately before pushing. It includes uncommitted source bytes and
+rejects changes to plan-bound code. Keep the manifest and machine-specific
+evidence outside the public checkout. Source hashes establish identity;
+independent numerical comparisons establish that the selected port preserves
+the research behavior. Neither substitutes for saved-checkpoint quality or
+hardware qualification.
