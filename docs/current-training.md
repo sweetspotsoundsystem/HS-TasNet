@@ -93,6 +93,12 @@ unchanged. The frozen plan's original controller fields retain their
 historical values. The optional
 `supervise_latency58_four_second_quality_v2` wrapper waits for the actual
 training completion receipt and runs this CPU evaluation automatically.
+The frozen workflow retains its historical v0.4 deployed baseline. The separate
+`review_latency58_four_second_current_release` supplement authenticates the
+v0.6.1 Git LFS model identity and recorded quality measurements, then compares
+both completed candidates against that graph on all 56 track/stem cells and
+840 source-view windows. It preserves the original comparisons and performs
+no inference or model selection.
 
 ## Run and inspect
 
