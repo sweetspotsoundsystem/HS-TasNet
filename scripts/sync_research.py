@@ -31,7 +31,7 @@ def working_files(root):
     return sorted({name.decode() for name in names.split(b"\0") if name})
 
 
-def comparison(source, production, plan_path, *, public=ROOT):
+def comparison(source, production, plan_path, *, public=ROOT, extra_sources=()):
     source, production, public, plan_path = map(
         lambda value: Path(value).absolute(), (source, production, public, plan_path))
     if source == public or not plan_path.is_relative_to(source):
@@ -47,6 +47,12 @@ def comparison(source, production, plan_path, *, public=ROOT):
     paths.update(production.glob("*.py"))
     paths.update((production / "tests").glob("*.py"))
     paths.update(production / name for name in ("full_config.json", "corpus_config.json"))
+    for name in extra_sources:
+        path = Path(name)
+        path = path if path.is_absolute() else source / path
+        if path.suffix not in SOURCE_SUFFIXES | {".json"}:
+            raise ValueError(f"Additional comparison input must be source code or JSON: {path}")
+        paths.add(path)
     inventory = {}
     for path in sorted(paths):
         if path.is_relative_to(source):
@@ -81,6 +87,9 @@ def main():
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--production-root", type=Path, required=True)
     parser.add_argument("--active-plan", type=Path, required=True)
+    parser.add_argument("--extra-source", type=Path, action="append", default=[],
+                        help="Additional selected source or JSON file; repeat as needed. "
+                             "Relative paths are resolved against --source-root")
     parser.add_argument("--manifest", type=Path, required=True,
                         help="Local review artifact outside the public checkout")
     parser.add_argument("--write", action="store_true")
@@ -88,7 +97,8 @@ def main():
     manifest = args.manifest.absolute()
     if manifest.resolve().is_relative_to(ROOT):
         raise ValueError("Keep the local comparison manifest outside the public checkout")
-    current = comparison(args.source_root, args.production_root, args.active_plan)
+    current = comparison(args.source_root, args.production_root, args.active_plan,
+                         extra_sources=args.extra_source)
     if args.write:
         with manifest.open("x") as stream:
             json.dump(current, stream, indent=2, sort_keys=True)

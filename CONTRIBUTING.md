@@ -67,3 +67,10 @@ evidence outside the public checkout. Source hashes establish identity;
 independent numerical comparisons establish that the selected port preserves
 the research behavior. Neither substitutes for saved-checkpoint quality or
 hardware qualification.
+
+New evaluation or recovery helpers may live outside `research/direct/` and may
+not be inputs to the active training plan. Include each intentionally selected
+file with `--extra-source research/path/to/helper.py` when writing and verifying
+the comparison. Relative paths use `--source-root`. These files are recorded as
+unbound inputs; the command still verifies every included plan-bound source
+against its frozen digest. Do not edit the active plan to add later review code.

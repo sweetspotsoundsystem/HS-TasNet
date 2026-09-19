@@ -125,6 +125,30 @@ results and are not all captured by those identity checks. Historical XOR-packed
 research recoveries need their archived decoder and parent; see
 [provenance](provenance.md).
 
+After an abrupt process or machine failure, the last metric row can be newer
+than the last saved checkpoint. Resume from the completed step and data cursor
+inside the checkpoint; later unsaved updates must be repeated. Keep the
+original schedule horizon and preserve the previous run directory. A missing
+`result.json` does not establish that training reached its requested endpoint.
+
+### Changing the training dataset
+
+Dataset expansion starts a new experiment. Build a new manifest, exclude the
+held-out recordings and related versions, and update a copied configuration's
+root weights. Initialize with `--checkpoint` and an explicit raw or EMA role;
+this starts fresh Adam/EMA. `--resume` requires the original dataset and config
+identities and will reject a changed manifest or root order.
+
+For a data-only comparison, keep the starting weight role, model, objective and
+optimizer-update budget fixed, and record the sampling weight of new material.
+New artists and production conditions add diversity beyond the existing pitch,
+tempo and remix augmentations. The current recipe already adds instrumental and
+vocals-only supervision on every update. Check unwanted vocal output on
+instrumental material alongside preservation of quiet real vocals and Other.
+Keep evaluation recordings out of training and retain the existing physical
+scoring intervals when comparing results. Changing training data does not
+change the deployment graph or its algorithmic latency.
+
 ## Export
 
 Export either checkpoint role to the fixed eight-state interface:
