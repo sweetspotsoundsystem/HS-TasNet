@@ -31,6 +31,9 @@ def test_export_matches_reference_trajectory_without_mutating_source(tmp_path, v
     import onnx
     torch.set_num_threads(1)
     model = active_model().train()
+    if variant == 'integer':
+        from hs_tasnet import teacher
+        teacher.attach(model, teacher.specification(1.))
     # Emulate a device-bound caller on CPU-only CI: its state allocator may be
     # used on its own device, but must not be asked for the verifier's CPU state.
     # A real CUDA model enforces the same boundary for device="cpu" requests.

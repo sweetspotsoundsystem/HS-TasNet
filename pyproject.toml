@@ -22,6 +22,7 @@ Repository = "https://github.com/sweetspotsoundsystem/HS-TasNet"
 [project.optional-dependencies]
 streaming = ["onnxruntime==1.26.0", "soundfile>=0.12"]
 training = ["torch==2.8.0", "soundfile>=0.12"]
+teacher = ["torch==2.8.0", "torchaudio==2.8.0", "julius==0.2.7", "demucs @ https://github.com/facebookresearch/demucs/archive/e976d93ecc3865e5757426930257e200846a520a.zip"]
 onnx = ["torch==2.8.0", "onnx==1.19.1", "onnxruntime==1.26.0"]
 test = ["pytest>=8"]
 
@@ -35,6 +36,9 @@ pythonpath = ["."]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["hs_tasnet"]

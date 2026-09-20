@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 from .checkpoint import ParameterEMA, load_model, load_training_checkpoint, save_training_checkpoint, state_sha256
 from .data import (AbsoluteIndexSampler, CROP_SAMPLES, WARMUP_SAMPLES, audio_sha,
                    batch_recipes, load_manifest, make_dataset, remix_batch, worker_init)
-from .losses import grouped_update
+from .losses import grouped_update, _teacher_weight
 from .model import StreamingHSTasNet
 
 
@@ -48,8 +48,14 @@ class TrainingConfig:
     device: str = "cuda"
     workers: int = 2
     extra_ordinary_primary_sdr_weight: float = 0.
+    teacher_coefficient: float = 0.
+    teacher_checkpoint: str | None = None
 
     def validate(self):
+        _teacher_weight(self.teacher_coefficient)
+        if self.teacher_coefficient and (not self.teacher_checkpoint
+                or self.extra_ordinary_primary_sdr_weight != .2):
+            raise ValueError("Teacher training requires its checkpoint and extra_ordinary_primary_sdr_weight=0.2")
         if (type(self.extra_ordinary_primary_sdr_weight) not in (float, int)
                 or self.extra_ordinary_primary_sdr_weight not in (0., .2)):
             raise ValueError("extra_ordinary_primary_sdr_weight must be 0 or 0.2")
@@ -154,6 +160,15 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
     # Preserve the exact configuration identity of existing baseline checkpoints.
     if config.extra_ordinary_primary_sdr_weight == 0:
         config_dict.pop("extra_ordinary_primary_sdr_weight")
+    config_dict.pop("teacher_checkpoint")
+    teacher_provider = None
+    if config.teacher_coefficient:
+        from .teacher import CPUTrainingTeacher
+        teacher_provider = CPUTrainingTeacher(config.teacher_checkpoint, coefficient=config.teacher_coefficient)
+        teacher_provider._load()
+        config_dict["teacher_supervision"] = teacher_provider.specification
+    else:
+        config_dict.pop("teacher_coefficient")
     # Dict equality/canonical JSON hashes ignore insertion order, but the
     # counter-addressed sampler assigns intervals in this explicit order.
     data_identity = {"manifest_sha256": corpus.sha256,
@@ -180,6 +195,9 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
         model.training_precision = config.precision
         optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, foreach=False)
         ema = ParameterEMA(model, decay=float(config.ema_decay))
+        if teacher_provider is not None or getattr(model, "provenance", {}).get("branch_memory_current_stage_teacher_supervision"):
+            from .teacher import attach
+            attach(model, teacher_provider.specification if teacher_provider is not None else None)
     model.train().requires_grad_(True)
     model.training_precision = config.precision
     initial_step = step
@@ -224,14 +242,26 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
                 before = audio_sha(mixture, targets)
                 mixture, targets, _, _ = remix_batch(mixture, targets, seed=config.seed, first_sample_index=first)
                 after = audio_sha(mixture, targets)
+                teacher_options, teacher_metadata = {}, {}
+                if teacher_provider is not None:
+                    from .teacher import supervision_sha, validate_checkpoint
+                    validate_checkpoint(config_dict, model.provenance)
+                    teacher_targets = teacher_provider.render(mixture)
+                    teacher_metadata = {
+                        "teacher_supervision_sha256": supervision_sha(teacher_provider.specification),
+                        "teacher_targets_sha256": state_sha256({"teacher_targets": teacher_targets})}
+                    teacher_options = {"teacher_coefficient": config.teacher_coefficient,
+                                       "teacher_targets": teacher_targets.to(device)}
+                    del teacher_targets
                 update = grouped_update(model, optimizer, ema, mixture, targets, step=step + 1,
                     warmup_samples=config.warmup_samples, ordinary_microbatch=config.microbatch_size,
                     auxiliary_microbatch=config.auxiliary_microbatch_size,
-                    extra_ordinary_primary_sdr_weight=config.extra_ordinary_primary_sdr_weight)
+                    extra_ordinary_primary_sdr_weight=config.extra_ordinary_primary_sdr_weight, **teacher_options)
+                del teacher_options
                 step += 1
                 if any(not torch.equal(tensor, fixed[name]) for name, tensor in model.named_buffers()):
                     raise RuntimeError("Training modified a fixed model buffer")
-                row = {**update, "lr": optimizer.param_groups[0]["lr"], "first_sample_index": first,
+                row = {**update, **teacher_metadata, "lr": optimizer.param_groups[0]["lr"], "first_sample_index": first,
                     "next_sample_index": first + config.batch_size, "pitch_tempo_recipes": batch_recipes(config_dict, first),
                     "before_remix_audio_sha256": before, "after_remix_audio_sha256": after,
                     "elapsed_seconds": time.monotonic() - began}

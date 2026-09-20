@@ -318,11 +318,21 @@ def _atomic_save(path, payload):
         temporary.unlink(missing_ok=True)
 
 
+def _validate_teacher(config, provenance):
+    if ("teacher_coefficient" in config or "teacher_supervision" in config
+            or "branch_memory_current_stage_teacher_supervision" in provenance
+            or provenance.get("branch_memory_online_teacher_used")
+            or provenance.get("branch_memory_teacher_generated_targets_in_current_stage")):
+        from .teacher import validate_checkpoint
+        validate_checkpoint(config, provenance)
+
+
 def save_training_checkpoint(path, model, optimizer, ema, *, step, next_sample_index,
                              config, data_identity, metadata=None, compressed=True):
     """Atomically replace one checkpoint after a complete Adam/EMA update."""
     _require(type(model) is StreamingHSTasNet and isinstance(config, dict)
              and type(ema) is ParameterEMA and ema.updates == step, "Invalid training checkpoint objects")
+    _validate_teacher(config, model.provenance)
     _validate_cursor(step, next_sample_index, config)
     _validate_optimizer(model, optimizer, step)
     state = _cpu_tree(model.state_dict())
@@ -352,6 +362,7 @@ def _training_payload(envelope):
     _require(payload["schema"] == SCHEMA and payload["config_sha256"] == _json_sha(payload["config"])
              and payload["data_identity_sha256"] == _json_sha(payload["data_identity"]),
              "Checkpoint configuration or dataset fingerprint differs")
+    _validate_teacher(payload["config"], payload["provenance"])
     _validate_cursor(payload["step"], payload["next_sample_index"], payload["config"])
     return payload
 

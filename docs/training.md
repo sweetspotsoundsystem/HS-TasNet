@@ -83,6 +83,57 @@ Adam/EMA run. Its coefficient is saved in checkpoint configuration and cannot
 change during exact resume. The default is zero additional weight; baseline
 configuration serialization remains compatible with existing checkpoints.
 
+### Teacher-assisted experiment
+
+`configs/teacher-training.json` adds `teacher_coefficient=1.0` to the primary
+SDR ablation. It retains the ordinary ground-truth loss and auxiliary source
+views. Separation improvement from this experiment has not been established.
+Compare saved endpoints on the same held-out material, including instrumental
+leakage, isolated and quiet vocals, and the Other stem.
+
+Install the optional training dependency and obtain the pinned teacher:
+
+```bash
+python -m pip install -e '.[training,teacher]'
+mkdir -p models
+curl --fail --location \
+  https://dl.fbaipublicfiles.com/demucs/mdx_final/7d865c68-3d5dd56b.th \
+  --output models/7d865c68-3d5dd56b.th
+```
+
+The provider verifies the checkpoint's 167,918,783 bytes and SHA-256
+`3d5dd56b5bc986f136dff98655ded22b2b033f465ccec7a28640a6b15fd71ed6`,
+the loaded model state, and the pinned Demucs source files before use. The
+teacher extra pins Demucs commit `e976d93ecc3865e5757426930257e200846a520a`
+and Julius 0.2.7. Downloaded teacher weights remain separate from this package.
+
+Start with the usual training command below, substituting
+`--config configs/teacher-training.json`. Set `teacher_checkpoint` in a copied
+JSON config to use another local location for the same authenticated bytes.
+The CLI sets one CPU thread; library callers must call
+`torch.set_num_threads(1)` before enabling the teacher.
+
+The teacher runs on CPU in FP32, using each final augmented six-second mixture,
+including the student's warmup context. It uses official per-context
+normalization, no random shifts, and no split inference. Drums, Bass and Vocals
+use the teacher's native heads; Other is mixture minus those three stems. Only
+the scored suffix contributes to the student's teacher loss.
+
+The additional waveform L1 term applies to ground-truth-active complete
+one-second windows. Its scale is the maximum of ground-truth RMS, 0.1 times
+mixture RMS, and 0.001; reduction uses full-batch active-window counts per stem.
+Silent ground-truth windows, the partial final window, and auxiliary views
+receive no direct teacher term. Gradients through residual Other can still
+affect the native heads, so leakage must be checked after training.
+
+Teacher construction preserves Python, NumPy and CPU PyTorch random state.
+Portable checkpoints retain the coefficient, teacher identity and supervision
+policy; exact resume rejects changes to them. The checkpoint file's local path
+is excluded from that identity. A zero coefficient preserves the baseline
+training path without loading teacher weights or Demucs. The teacher is never
+included in streaming inference or export; it adds training work and memory,
+and does not change the student's architecture or algorithmic delay.
+
 ## Start and resume
 
 The released integer ONNX graph is sufficient for inference. It cannot recover

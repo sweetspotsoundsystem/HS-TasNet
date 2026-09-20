@@ -64,7 +64,8 @@ def advance(candidate, optimizer, ema, step):
     return float(loss.detach())
 
 
-def test_exact_next_update_after_portable_packed_restore(tmp_path):
+@pytest.mark.parametrize('with_teacher', [False, True])
+def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher):
     torch.set_num_threads(1)
     random.seed(192); np.random.seed(192); torch.manual_seed(192)
     candidate = model()
@@ -72,6 +73,16 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path):
     ema = ParameterEMA(candidate)
     config = {"steps": 3, "batch_size": 1, "data_start": 400, "lr": 3e-5,
               "precision": "fp32", "seed": 192}
+    if with_teacher:
+        from hs_tasnet import teacher
+        specification = teacher.specification(1.)
+        teacher.attach(candidate, specification)
+        config.update(teacher_coefficient=1., teacher_supervision=specification)
+        invalid = {**config, 'teacher_coefficient': .5}
+        with pytest.raises(ValueError, match='teacher identity'):
+            save_training_checkpoint(tmp_path / 'invalid.pt', candidate, optimizer, ema,
+                step=0, next_sample_index=400, config=invalid, data_identity={})
+        assert not (tmp_path / 'invalid.pt').exists()
     data = {"manifest_sha256": "a" * 64, "validation_manifest_sha256": "b" * 64}
     advance(candidate, optimizer, ema, 1)
     saved_optimizer = tree_fingerprint(optimizer.state_dict())
@@ -115,10 +126,14 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path):
     inference_rng = tree_fingerprint(checkpoint._rng_state())
     raw = load_model(path, expected_sha256=bound["sha256"], role="raw")
     assert state_sha256(raw.state_dict()) == saved_raw
+    if with_teacher:
+        assert raw.provenance[teacher.PROVENANCE_KEY] == specification
     assert not raw.training and not any(p.requires_grad for p in raw.parameters())
     del raw
     averaged = load_model(path, expected_sha256=bound["sha256"], role="ema")
     assert averaged.provenance["checkpoint_weight_role"] == "averaged_inference"
+    if with_teacher:
+        assert averaged.provenance[teacher.PROVENANCE_KEY] == specification
     assert tree_fingerprint(checkpoint._rng_state()) == inference_rng
     assert not torch.cuda.is_initialized()
 

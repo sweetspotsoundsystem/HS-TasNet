@@ -141,7 +141,8 @@ def test_silence_and_auxiliary_input_validation():
 
 
 @pytest.mark.parametrize("extra", [0., .2], ids=["baseline", "primary_sdr_ablation"])
-def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, extra):
+@pytest.mark.parametrize("teacher_coefficient", [0., 1.])
+def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, extra, teacher_coefficient):
     """Compare replay to an independently retained tiny neural graph.
 
     This isolates the accumulation protocol without a costly full-size model;
@@ -177,6 +178,7 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, e
     targets = .02 * torch.randn(16, 4, 2, 128 + 44160, generator=generator)
     targets[:3, 2] = 0
     mixture = targets.sum(1)
+    teacher_targets = .03 * torch.randn(targets[..., 128:].shape, generator=generator)
     auxiliary_mix, auxiliary_targets = losses.source_views(mixture, targets)
     inputs = (("ordinary", mixture, targets, losses.objective, 1.),
               ("auxiliary", auxiliary_mix, auxiliary_targets, losses.auxiliary_objective, .1))
@@ -188,6 +190,11 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, e
         reference_loss = reference_loss + coefficient * objective(
             result.raw, result.deployed, truth[..., 128:], audio[..., 128:],
             **({"extra_ordinary_primary_sdr_weight": extra} if group == "ordinary" else {})).total
+        if teacher_coefficient and group == "ordinary":
+            from hs_tasnet._losses.teacher import contribution
+            reference_loss = reference_loss + teacher_coefficient * contribution(
+                result.deployed, teacher_targets, truth[..., 128:], audio[..., 128:],
+                losses.prepare_reduction(truth[..., 128:])).total
     expected = torch.autograd.grad(reference_loss, tuple(model.parameters()))
 
     def compare_capture_coordinates(phase, group, offset):
@@ -198,13 +205,16 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, e
     rows = losses.accumulate_groups(model, mixture, targets, warmup_samples=128,
                                    ordinary_microbatch=4, auxiliary_microbatch=1,
                                    verify_input_gradients=True, progress=compare_capture_coordinates,
-                                   extra_ordinary_primary_sdr_weight=extra)
+                                   extra_ordinary_primary_sdr_weight=extra,
+                                   teacher_coefficient=teacher_coefficient, teacher_targets=teacher_targets)
     for parameter, reference in zip(model.parameters(), expected, strict=True):
         torch.testing.assert_close(parameter.grad, reference, atol=1e-6, rtol=1e-5)
     assert abs(sum(row["weighted_loss"] for row in rows.values()) - float(reference_loss.detach())) < 3e-6
     assert all(row["replay_outputs_bit_exact"] for row in rows.values())
     assert all(row["whole_group_objective_evaluations"] == 1 for row in rows.values())
     assert rows["auxiliary"]["view_contribution_multipliers"] == [1., .25]
+    assert 'teacher_coefficient' not in rows['auxiliary']
+    assert ('teacher_coefficient' in rows['ordinary']) == bool(teacher_coefficient)
 
 
 @pytest.mark.parametrize("silent", [False, True])

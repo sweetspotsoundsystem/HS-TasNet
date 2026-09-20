@@ -137,11 +137,48 @@ def test_fresh_stop_keeps_original_horizon_and_one_update_per_address(harness, t
     assert [row["first_sample_index"] for row in rows] == [320, 336]
 
 
+def test_teacher_sees_final_remix_and_persists_portable_identity(harness, monkeypatch, tmp_path):
+    from hs_tasnet import teacher
+    config, _, calls, update = harness
+    config = replace(config, extra_ordinary_primary_sdr_weight=.2, teacher_coefficient=1.,
+                     teacher_checkpoint='movable/teacher.th')
+    expected_spec = teacher.specification(1.)
+    rendered = []
+    class Provider:
+        def __init__(self, path, *, coefficient):
+            assert path == 'movable/teacher.th' and coefficient == 1.
+            self.specification = expected_spec
+        def _load(self): pass
+        def render(self, mixture):
+            rendered.append(mixture.clone())
+            assert torch.all(mixture >= 1320)
+            return mixture[:, None].repeat(1, 4, 1, 1) * .125
+    monkeypatch.setattr(teacher, 'CPUTrainingTeacher', Provider)
+    monkeypatch.setattr(trainer, 'remix_batch', lambda mixture, targets, **kwargs:
+                        (mixture + 1000, targets, None, None))
+    def teacher_update(model, optimizer, ema, mixture, targets, **kwargs):
+        assert kwargs.pop('teacher_coefficient') == 1.
+        expected = mixture[:, None].repeat(1, 4, 1, 1) * .125
+        assert torch.equal(kwargs.pop('teacher_targets'), expected)
+        assert model.provenance[teacher.PROVENANCE_KEY] == expected_spec
+        return update(model, optimizer, ema, mixture, targets, **kwargs)
+    monkeypatch.setattr(trainer, 'grouped_update', teacher_update)
+    trainer.train(config, 'train.json', tmp_path / 'run', stop_after=2)
+    assert len(rendered) == 2
+    assert 'teacher_checkpoint' not in calls.saves[0]['config']
+    assert calls.saves[0]['config']['teacher_supervision'] == expected_spec
+    rows = [json.loads(line) for line in (tmp_path / 'run/metrics.jsonl').read_text().splitlines()]
+    assert all(r['teacher_supervision_sha256'] == teacher.supervision_sha(expected_spec) for r in rows)
+    assert len({r['teacher_targets_sha256'] for r in rows}) == 2
+
+
 def test_resume_uses_restored_objects_cursor_identities_and_rng(harness, monkeypatch, tmp_path):
     config, corpus, calls, _ = harness
     model, optimizer, ema = endpoint(2)
     expected_config = asdict(replace(config, root_weights=corpus.root_weights))
     expected_config.pop("extra_ordinary_primary_sdr_weight")  # Legacy baseline checkpoint identity.
+    expected_config.pop("teacher_coefficient")
+    expected_config.pop("teacher_checkpoint")
     before_python, before_numpy, before_torch = random.getstate(), np.random.get_state(), torch.get_rng_state()
     generator = torch.Generator().manual_seed(173)
     resumed_torch = generator.get_state()
