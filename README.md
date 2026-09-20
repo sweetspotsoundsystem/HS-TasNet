@@ -80,3 +80,6 @@ snapshot remains in git history; see [provenance and migration](docs/provenance.
 
 The implementation builds on [HS-TasNet](https://arxiv.org/abs/2402.17701) and
 [Phil Wang's implementation](https://github.com/lucidrains/hs-tasnet).
+
+The [draft paper](paper/README.md) documents the historical four-state C204
+predecessor; its results do not evaluate the current eight-state model.

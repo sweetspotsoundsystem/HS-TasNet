@@ -46,6 +46,6 @@ packages = ["stemgenrt"]
 [tool.hatch.build.targets.sdist]
 include = [
     "stemgenrt", "README.md", "LICENSE", "pyproject.toml", "docs", "CONTRIBUTING.md",
-    "AGENTS.md", "configs", "scripts", "tests", "models/README.md", "examples", "train_streaming.py",
+    "AGENTS.md", "configs", "scripts", "tests", "models/README.md", "examples", "train_streaming.py", "paper",
 ]
 exclude = ["research", "runs", "models/*.onnx", "models/*.pt", "**/__pycache__", "**/*.pyc"]
