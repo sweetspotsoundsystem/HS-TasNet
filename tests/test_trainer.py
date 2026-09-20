@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import torch
 
-from hs_tasnet import trainer
+from stemgenrt import trainer
 
 
 class TinyModel(torch.nn.Module):
@@ -86,7 +86,7 @@ def harness(monkeypatch):
 
     monkeypatch.setattr(trainer, "load_manifest", manifest)
     monkeypatch.setattr(trainer, "configure_determinism", lambda config: torch.device("cpu"))
-    monkeypatch.setattr(trainer, "StreamingHSTasNet", TinyModel)
+    monkeypatch.setattr(trainer, "StemgenRT58", TinyModel)
     monkeypatch.setattr(trainer, "ParameterEMA", TinyEMA)
     monkeypatch.setattr(trainer, "make_dataset", dataset)
     monkeypatch.setattr(trainer, "remix_batch", lambda mixture, targets, **kwargs:
@@ -138,7 +138,7 @@ def test_fresh_stop_keeps_original_horizon_and_one_update_per_address(harness, t
 
 
 def test_teacher_sees_final_remix_and_persists_portable_identity(harness, monkeypatch, tmp_path):
-    from hs_tasnet import teacher
+    from stemgenrt import teacher
     config, _, calls, update = harness
     config = replace(config, extra_ordinary_primary_sdr_weight=.2, teacher_coefficient=1.,
                      teacher_checkpoint='movable/teacher.th')
@@ -267,7 +267,7 @@ def test_resume_identity_keeps_sampler_root_order(harness, monkeypatch, tmp_path
 
 
 def test_validation_split_disjointness_and_identity_are_bound(harness, monkeypatch, tmp_path):
-    from hs_tasnet import data
+    from stemgenrt import data
     config, corpus, calls, _ = harness
     validation = SimpleNamespace(sha256="validation-bytes", tracks=("validation-track",), split="valid")
     checks = []

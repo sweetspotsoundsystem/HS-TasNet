@@ -74,7 +74,7 @@ def build_fp32(model, *, checkpoint_sha256=None):
                 and all(c in "0123456789abcdef" for c in checkpoint_sha256),
                 "checkpoint_sha256 must be a lowercase SHA-256 digest")
         metadata["checkpoint_sha256"] = checkpoint_sha256
-    onnx.helper.set_model_props(graph, {"hs_tasnet." + key: value for key, value in metadata.items()})
+    onnx.helper.set_model_props(graph, {"stemgenrt." + key: value for key, value in metadata.items()})
     onnx.checker.check_model(graph, full_check=True)
     require(not any(value.data_location == onnx.TensorProto.EXTERNAL for value in graph.graph.initializer),
             "Export unexpectedly uses external tensor data")

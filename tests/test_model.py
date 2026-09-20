@@ -9,13 +9,13 @@ import sys
 import pytest
 import torch
 
-from hs_tasnet.model import StreamingHSTasNet, StreamingState, render_scored_context
+from stemgenrt.model import StemgenRT58, StreamingState, render_scored_context
 
 
 def new_model():
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(617)
-        model = StreamingHSTasNet()
+        model = StemgenRT58()
         # Exercise paths that deliberately start with zero output projections.
         with torch.no_grad():
             for parameter in model.parameters():
@@ -27,14 +27,13 @@ def new_model():
 def test_public_import_keeps_torch_lazy_and_has_no_research_dependency():
     script = """
 import sys
-import hs_tasnet
+import stemgenrt
 assert 'torch' not in sys.modules
-assert set(hs_tasnet.__all__) == {
-    'StreamingSeparator', 'StreamingHSTasNet', 'StreamingState', 'render_scored_context'}
-from hs_tasnet import StreamingHSTasNet
-assert StreamingHSTasNet.__module__ == 'hs_tasnet.model'
+assert set(stemgenrt.__all__) == {
+    'StreamingSeparator', 'StemgenRT58', 'StreamingState', 'render_scored_context'}
+from stemgenrt import StemgenRT58
+assert StemgenRT58.__module__ == 'stemgenrt.model'
 assert not any(name == 'research' or name.startswith('research.') for name in sys.modules)
-assert 'hs_tasnet.hs_tasnet' not in sys.modules
 """
     subprocess.run([sys.executable, "-c", script], check=True)
 
@@ -42,7 +41,7 @@ assert 'hs_tasnet.hs_tasnet' not in sys.modules
 def test_native_matches_released_interface_and_checkpoint_geometry():
     model = new_model().eval()
     release = json.loads((Path(__file__).resolve().parents[1]
-                          / "hs_tasnet/streaming_models.json").read_text())["current"]
+                          / "stemgenrt/streaming_models.json").read_text())["current"]
     state = model.initial_state(1)
     assert type(state) is StreamingState
     assert tuple(release["states"]) == state._fields

@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from hs_tasnet.evaluation import (EvaluationTrack, MetricConfig, SOURCE_ORDER,
+from stemgenrt.evaluation import (EvaluationTrack, MetricConfig, SOURCE_ORDER,
                                   evaluate_manifest, load_evaluation_manifest,
                                   stream_track)
-from hs_tasnet._evaluation.metrics import windowed_sdr
+from stemgenrt._evaluation.metrics import windowed_sdr
 
 
 class DelayedRenderer:

@@ -92,16 +92,16 @@ def build(parent, *, expected_parent_sha256="d2945742d27fe23469614aef4f5b79e46fb
             and sum(n.op_type == "MatMulInteger" for n in graph.graph.node) == 14,
             "An unrelated node, original integer product or initializer changed")
     properties = {v.key: v.value for v in graph.metadata_props}
-    for key in ("hs_tasnet.precise_node_count", "hs_tasnet.integer_exporter_sha256"):
+    for key in ("stemgenrt.precise_node_count", "stemgenrt.integer_exporter_sha256"):
         if key in properties:
             properties["parent." + key] = properties.pop(key)
-    properties.update({"hs_tasnet.runtime_variant": VERSION,
-        "hs_tasnet.parent_graph_sha256": hashlib.sha256(parent.SerializeToString()).hexdigest(),
-        "hs_tasnet.integer_exporter_sha256": sha(__file__),
-        "hs_tasnet.integer_weight_precision": "Fourteen S8 symmetric reduced-range matrices [-64,64]",
-        "hs_tasnet.floating_additional_layers": "phase factors, fusion refinement, temporal attention, branch GRU biases/nonlinearities and output projections",
-        "hs_tasnet.additional_branch_integer_projections": "4",
-        "hs_tasnet.deployment_quality_status": "unmeasured; retained source FP32 score is not this graph's quality"})
+    properties.update({"stemgenrt.runtime_variant": VERSION,
+        "stemgenrt.parent_graph_sha256": hashlib.sha256(parent.SerializeToString()).hexdigest(),
+        "stemgenrt.integer_exporter_sha256": sha(__file__),
+        "stemgenrt.integer_weight_precision": "Fourteen S8 symmetric reduced-range matrices [-64,64]",
+        "stemgenrt.floating_additional_layers": "phase factors, fusion refinement, temporal attention, branch GRU biases/nonlinearities and output projections",
+        "stemgenrt.additional_branch_integer_projections": "4",
+        "stemgenrt.deployment_quality_status": "unmeasured; retained source FP32 score is not this graph's quality"})
     helper.set_model_props(graph, properties)
     onnx.checker.check_model(graph, full_check=True)
     return graph, {"version": VERSION, "projections": proof,

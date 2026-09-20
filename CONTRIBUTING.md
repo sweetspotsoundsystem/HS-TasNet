@@ -1,7 +1,7 @@
 # Maintained source and research
 
 The supported implementation is the eight-state streaming model in
-`hs_tasnet/model.py`. Keep its data pipeline, weighted objective, Adam/EMA
+`stemgenrt/model.py`. Keep its data pipeline, weighted objective, Adam/EMA
 checkpointing, evaluation and deployment transformations in the same review.
 The model has fixed 1024-sample analysis, 256-sample synthesis and 128-sample
 hops. Its parameter names, fixed buffers, state interface and historical native
@@ -9,7 +9,7 @@ checkpoint schema are part of the compatibility contract.
 
 `research/` and `runs/` are ignored local work. The previous blanket research
 sync script has been removed. Move only an intentionally selected implementation
-and its necessary reusable dependencies into `hs_tasnet/`, together with tests
+and its necessary reusable dependencies into `stemgenrt/`, together with tests
 and user documentation. Do not force-add ignored experiments. Keep historical
 machine supervision, temporary probes, operator receipts, storage approvals,
 corpus audio and checkpoints out of the maintained source and distributions.
@@ -28,7 +28,7 @@ Install CPU PyTorch or the appropriate CUDA build, then:
 ```bash
 python -m pip install -e '.[streaming,training,onnx,test]' build
 python scripts/download_streaming_model.py
-python scripts/run_cpu_tests.py -q --basetemp=/tmp/hs-tasnet-tests
+python scripts/run_cpu_tests.py -q --basetemp=/tmp/stemgenrt-tests
 python -m build
 ```
 

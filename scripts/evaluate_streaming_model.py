@@ -33,15 +33,15 @@ def main(argv=None):
     if args.output.exists():
         parser.error("--output must be a new file")
 
-    from hs_tasnet.evaluation import NativeRenderer, OnnxRenderer, evaluate_manifest
+    from stemgenrt.evaluation import NativeRenderer, OnnxRenderer, evaluate_manifest
 
     if args.onnx is not None:
-        from hs_tasnet.streaming import StreamingSeparator
+        from stemgenrt.streaming import StreamingSeparator
         renderer = OnnxRenderer(StreamingSeparator(args.onnx, expected_sha256=args.sha256))
         identity = {"format": "onnx", "sha256": args.sha256}
     else:
         import torch
-        from hs_tasnet.checkpoint import load_model
+        from stemgenrt.checkpoint import load_model
 
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)

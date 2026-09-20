@@ -23,7 +23,7 @@ from .checkpoint import ParameterEMA, load_model, load_training_checkpoint, save
 from .data import (AbsoluteIndexSampler, CROP_SAMPLES, WARMUP_SAMPLES, audio_sha,
                    batch_recipes, load_manifest, make_dataset, remix_batch, worker_init)
 from .losses import grouped_update, _teacher_weight
-from .model import StreamingHSTasNet
+from .model import StemgenRT58
 
 
 @dataclass(frozen=True)
@@ -190,7 +190,7 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
         if not 0 <= step < stop:
             raise ValueError("Resume must precede the requested stopping point")
     else:
-        model = load_model(checkpoint, expected_sha256=sha256, role=role) if checkpoint else StreamingHSTasNet()
+        model = load_model(checkpoint, expected_sha256=sha256, role=role) if checkpoint else StemgenRT58()
         model.to(device).train().requires_grad_(True)
         model.training_precision = config.precision
         optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, foreach=False)

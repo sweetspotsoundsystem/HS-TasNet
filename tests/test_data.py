@@ -14,7 +14,7 @@ import soundfile as sf
 import torch
 from torch.utils.data import DataLoader
 
-from hs_tasnet.data import (
+from stemgenrt.data import (
     SAMPLE_RATE, SOURCE_NAMES, CROP_SAMPLES, EXPANDED_SAMPLES, WARMUP_SAMPLES, SCORED_SAMPLES,
     AbsoluteIndexSampler, CounterAddressedCropDataset, audio_sha, batch_recipes,
     build_manifest, load_manifest, make_dataset, pitch_tempo_recipe, remix_batch,

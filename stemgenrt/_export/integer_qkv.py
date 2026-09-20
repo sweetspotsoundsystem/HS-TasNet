@@ -74,14 +74,14 @@ def build(parent, *, expected_parent_sha256=PARENT_SHA):
             and [v.SerializeToString() for v in graph.graph.output] == [v.SerializeToString() for v in parent.graph.output],
             "Public interface changed")
     properties = {v.key: v.value for v in graph.metadata_props}
-    properties["hs_tasnet.parent_sixteen_exporter_sha256"] = properties["hs_tasnet.integer_exporter_sha256"]
-    properties.update({"hs_tasnet.runtime_variant": VERSION,
-        "hs_tasnet.parent_graph_sha256": expected_parent_sha256,
-        "hs_tasnet.integer_exporter_sha256": sha(__file__),
-        "hs_tasnet.integer_weight_precision": "Seventeen S8 symmetric reduced-range matrices [-64,64]",
-        "hs_tasnet.floating_additional_layers": "phase factors, fusion refinement, temporal output, GRU biases/nonlinearities",
-        "hs_tasnet.additional_attention_integer_products": "One fused QKV product; three column groups",
-        "hs_tasnet.deployment_quality_status": "unmeasured; parent score does not score this graph"})
+    properties["stemgenrt.parent_sixteen_exporter_sha256"] = properties["stemgenrt.integer_exporter_sha256"]
+    properties.update({"stemgenrt.runtime_variant": VERSION,
+        "stemgenrt.parent_graph_sha256": expected_parent_sha256,
+        "stemgenrt.integer_exporter_sha256": sha(__file__),
+        "stemgenrt.integer_weight_precision": "Seventeen S8 symmetric reduced-range matrices [-64,64]",
+        "stemgenrt.floating_additional_layers": "phase factors, fusion refinement, temporal output, GRU biases/nonlinearities",
+        "stemgenrt.additional_attention_integer_products": "One fused QKV product; three column groups",
+        "stemgenrt.deployment_quality_status": "unmeasured; parent score does not score this graph"})
     helper.set_model_props(graph, properties)
     onnx.checker.check_model(graph, full_check=True)
     return graph, {"version": VERSION, "fusion": fusion_proof,

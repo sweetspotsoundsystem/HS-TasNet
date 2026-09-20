@@ -88,7 +88,7 @@ def _load_model(checkpoint):
     try:
         import demucs
     except ImportError as error:
-        raise ImportError("Install HS-TasNet's teacher extra to enable teacher training") from error
+        raise ImportError("Install StemgenRT's teacher extra to enable teacher training") from error
     package = Path(demucs.__file__).resolve().parent
     source = json.loads(BACKEND.read_text())
     if (metadata.version("julius") != source["julius_version"]

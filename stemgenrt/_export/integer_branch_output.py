@@ -91,14 +91,14 @@ def build(parent, *, expected_parent_sha256="878c74694fa4c558de1c5a75837893a0afe
             and sum(n.op_type == "MatMulInteger" for n in graph.graph.node) == 16,
             "An unrelated node, original integer product or initializer changed")
     properties = {v.key: v.value for v in graph.metadata_props}
-    properties["hs_tasnet.parent_fourteen_exporter_sha256"] = properties["hs_tasnet.integer_exporter_sha256"]
-    properties.update({"hs_tasnet.runtime_variant": VERSION,
-        "hs_tasnet.parent_graph_sha256": hashlib.sha256(parent.SerializeToString()).hexdigest(),
-        "hs_tasnet.integer_exporter_sha256": sha(__file__),
-        "hs_tasnet.integer_weight_precision": "Sixteen S8 symmetric reduced-range matrices [-64,64]",
-        "hs_tasnet.floating_additional_layers": "phase factors, fusion refinement, temporal attention, branch GRU biases/nonlinearities",
-        "hs_tasnet.additional_branch_output_integer_projections": "2",
-        "hs_tasnet.deployment_quality_status": "unmeasured; retained source FP32 score is not this graph's quality"})
+    properties["stemgenrt.parent_fourteen_exporter_sha256"] = properties["stemgenrt.integer_exporter_sha256"]
+    properties.update({"stemgenrt.runtime_variant": VERSION,
+        "stemgenrt.parent_graph_sha256": hashlib.sha256(parent.SerializeToString()).hexdigest(),
+        "stemgenrt.integer_exporter_sha256": sha(__file__),
+        "stemgenrt.integer_weight_precision": "Sixteen S8 symmetric reduced-range matrices [-64,64]",
+        "stemgenrt.floating_additional_layers": "phase factors, fusion refinement, temporal attention, branch GRU biases/nonlinearities",
+        "stemgenrt.additional_branch_output_integer_projections": "2",
+        "stemgenrt.deployment_quality_status": "unmeasured; retained source FP32 score is not this graph's quality"})
     helper.set_model_props(graph, properties)
     onnx.checker.check_model(graph, full_check=True)
     return graph, {"version": VERSION, "projections": proof,

@@ -8,16 +8,16 @@ import numpy as np
 import pytest
 import torch
 
-from hs_tasnet.model import StreamingHSTasNet
-from hs_tasnet.export import export_model, interface
-from hs_tasnet._export.fp32 import make_export_copy
-from hs_tasnet._export.helpers import state_sha256
+from stemgenrt.model import StemgenRT58
+from stemgenrt.export import export_model, interface
+from stemgenrt._export.fp32 import make_export_copy
+from stemgenrt._export.helpers import state_sha256
 
 
 def active_model():
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(617)
-        model = StreamingHSTasNet()
+        model = StemgenRT58()
         # Exercise trained paths whose residual projection starts at zero.
         with torch.no_grad():
             for parameter in model.parameters():
@@ -32,7 +32,7 @@ def test_export_matches_reference_trajectory_without_mutating_source(tmp_path, v
     torch.set_num_threads(1)
     model = active_model().train()
     if variant == 'integer':
-        from hs_tasnet import teacher
+        from stemgenrt import teacher
         teacher.attach(model, teacher.specification(1.))
     # Emulate a device-bound caller on CPU-only CI: its state allocator may be
     # used on its own device, but must not be asked for the verifier's CPU state.
@@ -103,7 +103,7 @@ def test_export_rejects_geometry_override_and_nonfinite_weights():
 
 
 def test_failed_verification_does_not_publish_partial_files(tmp_path, monkeypatch):
-    import hs_tasnet.export as exporting
+    import stemgenrt.export as exporting
     torch.set_num_threads(1)
     model = active_model()
     def fail(*args, **kwargs):

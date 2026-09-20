@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hs_tasnet.data import build_manifest
+from stemgenrt.data import build_manifest
 
 
 def assignments(values, cast):

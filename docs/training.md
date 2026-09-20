@@ -1,6 +1,6 @@
-# Training, evaluation and export
+# StemgenRT-5.8 training, evaluation and export
 
-The maintained model has one geometry: stereo 44.1 kHz input, 1024-sample
+StemgenRT-5.8 has one geometry: stereo 44.1 kHz input, 1024-sample
 analysis, 256-sample synthesis, a 128-sample hop and eight streaming states.
 Install the appropriate PyTorch 2.8.0 build, then `pip install -e '.[training,onnx,test]'`.
 The export dependencies are pinned because integer lowering verifies a specific
@@ -150,7 +150,7 @@ python train_streaming.py --config configs/current-training.json \
 Use `--role raw` for a raw native checkpoint. Use `--scratch` in place of the
 checkpoint arguments to explicitly start untrained. `--stop-after 50` ends at
 update 50 while retaining the original 2,000-update learning-rate schedule.
-Every run requires a new output directory. The installed `hs-tasnet-train`
+Every run requires a new output directory. The installed `stemgenrt-train`
 command has the same options.
 
 The runner writes config/input identities, per-update metrics, `checkpoint.pt`

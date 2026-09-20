@@ -99,23 +99,23 @@ def build(native, fp32_graph):
     onnx.checker.check_model(graph, full_check=True)
     integer_graph = copy.deepcopy(graph)
     precise = rewrite(graph)
-    precise_count = {v.key: v.value for v in precise.metadata_props}["hs_tasnet.precise_node_count"]
+    precise_count = {v.key: v.value for v in precise.metadata_props}["stemgenrt.precise_node_count"]
     # Historical source quality may accompany a pinned graph; it is never
     # interpreted as the integer candidate's quality.
     for key in ("full14_sdr_db", "full14_result_sha256"):
-        old_key = "hs_tasnet." + key
+        old_key = "stemgenrt." + key
         if old_key in properties:
-            properties["hs_tasnet.source_checkpoint_" + key] = properties.pop(old_key)
-    properties.update({"hs_tasnet.runtime_variant": VERSION,
-                       "hs_tasnet.integer_weight_precision": "Ten S8 symmetric reduced-range matrices [-64,64]",
-                       "hs_tasnet.activation_quantization": "Dynamic U8 per one-frame projection; FP32 scales and dequantization",
-                       "hs_tasnet.precise_node_count": precise_count,
-                       "hs_tasnet.inference_precision": "FP64 quantizer ancestors; integer projections and output decoding FP32; public states FP32",
-                       "hs_tasnet.floating_additional_layers": "phase factors, fusion refinement, temporal attention and two branch GRUs",
-                       "hs_tasnet.refinement_silu_implementation": "x / (1 + exp(-x)); FP64 quantizer ancestor",
-                       "hs_tasnet.integer_exporter_sha256": sha(__file__),
-                       "hs_tasnet.integer_precision_transform_sha256": sha(rewrite.__code__.co_filename),
-                       "hs_tasnet.embedded_quality_scope": "Source FP32 checkpoint only; deployment graph quality is recorded separately"})
+            properties["stemgenrt.source_checkpoint_" + key] = properties.pop(old_key)
+    properties.update({"stemgenrt.runtime_variant": VERSION,
+                       "stemgenrt.integer_weight_precision": "Ten S8 symmetric reduced-range matrices [-64,64]",
+                       "stemgenrt.activation_quantization": "Dynamic U8 per one-frame projection; FP32 scales and dequantization",
+                       "stemgenrt.precise_node_count": precise_count,
+                       "stemgenrt.inference_precision": "FP64 quantizer ancestors; integer projections and output decoding FP32; public states FP32",
+                       "stemgenrt.floating_additional_layers": "phase factors, fusion refinement, temporal attention and two branch GRUs",
+                       "stemgenrt.refinement_silu_implementation": "x / (1 + exp(-x)); FP64 quantizer ancestor",
+                       "stemgenrt.integer_exporter_sha256": sha(__file__),
+                       "stemgenrt.integer_precision_transform_sha256": sha(rewrite.__code__.co_filename),
+                       "stemgenrt.embedded_quality_scope": "Source FP32 checkpoint only; deployment graph quality is recorded separately"})
     helper.set_model_props(precise, properties)
     require(all(v.SerializeToString() == preserved_bytes[v.name] for v in precise.graph.initializer
                 if v.name in preserved_bytes) and state_sha256(native.state_dict()) == fingerprint,

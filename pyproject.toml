@@ -1,7 +1,7 @@
 [project]
-name = "HS-TasNet"
+name = "StemgenRT"
 version = "0.4.0"
-description = "Eight-state streaming music separation, training and export"
+description = "StemgenRT-5.8 streaming music separation, training and export"
 authors = [{ name = "Phil Wang", email = "lucidrains@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,7 +27,7 @@ onnx = ["torch==2.8.0", "onnx==1.19.1", "onnxruntime==1.26.0"]
 test = ["pytest>=8"]
 
 [project.scripts]
-hs-tasnet-train = "hs_tasnet.trainer:main"
+stemgenrt-train = "stemgenrt.trainer:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -41,11 +41,11 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["hs_tasnet"]
+packages = ["stemgenrt"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "hs_tasnet", "README.md", "LICENSE", "pyproject.toml", "docs", "CONTRIBUTING.md",
+    "stemgenrt", "README.md", "LICENSE", "pyproject.toml", "docs", "CONTRIBUTING.md",
     "AGENTS.md", "configs", "scripts", "tests", "models/README.md", "examples", "train_streaming.py",
 ]
 exclude = ["research", "runs", "models/*.onnx", "models/*.pt", "**/__pycache__", "**/*.pyc"]

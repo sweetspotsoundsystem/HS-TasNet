@@ -9,12 +9,12 @@ import numpy as np
 import pytest
 import torch
 
-from hs_tasnet import checkpoint
-from hs_tasnet.checkpoint import (
+from stemgenrt import checkpoint
+from stemgenrt.checkpoint import (
     ParameterEMA, file_sha256, load_model, load_native_checkpoint,
     load_training_checkpoint, save_training_checkpoint, state_sha256,
 )
-from hs_tasnet.model import StreamingHSTasNet, VERSION, render_scored_context
+from stemgenrt.model import StemgenRT58, VERSION, render_scored_context
 
 
 def tree_fingerprint(value):
@@ -40,7 +40,7 @@ def tree_fingerprint(value):
 def model():
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(617)
-        result = StreamingHSTasNet().train()
+        result = StemgenRT58().train()
         # Exercise the initially zero branch output projections as well.
         with torch.no_grad():
             for parameter in result.parameters():
@@ -74,7 +74,7 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher)
     config = {"steps": 3, "batch_size": 1, "data_start": 400, "lr": 3e-5,
               "precision": "fp32", "seed": 192}
     if with_teacher:
-        from hs_tasnet import teacher
+        from stemgenrt import teacher
         specification = teacher.specification(1.)
         teacher.attach(candidate, specification)
         config.update(teacher_coefficient=1., teacher_supervision=specification)
@@ -186,7 +186,7 @@ def test_raw_continuation_retains_parent_averaging_as_history():
 
 
 def test_codec_roundtrip_bits_and_corruption():
-    from hs_tasnet._checkpoint.codec import pack, unpack
+    from stemgenrt._checkpoint.codec import pack, unpack
     source = {"values": torch.tensor([0., -0., float("nan"), float("inf")]),
               "indices": torch.tensor([-(2**62), 2**62], dtype=torch.int64),
               "empty": torch.empty(0), "scalar": torch.tensor(1.),

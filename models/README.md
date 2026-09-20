@@ -1,12 +1,14 @@
-# Current stereo streaming model
+# StemgenRT-5.8 model interface
 
 The released `hop128.onnx` separates 44.1 kHz stereo audio into drums, bass,
 vocals and other. Analysis is 1024 samples, synthesis 256 samples, and each
 input/output hop 128 samples. Causal attention and branch GRUs carry eight
 explicit FP32 states.
 
+See the [model overview](../README.md) for the latency suffix definition.
+
 Download with `python scripts/download_streaming_model.py`. The file's pinned
-identity and immutable download URL are in `hs_tasnet/streaming_models.json`.
+identity and immutable download URL are in `stemgenrt/streaming_models.json`.
 The graph is 37,532,574 bytes, SHA-256
 `08424ca91feae8d4746442a35ebf70489dea70ea6e81401b39483cf02d497748`.
 Use ONNX Runtime 1.26.0 CPU; the public wrapper sets one thread and disables

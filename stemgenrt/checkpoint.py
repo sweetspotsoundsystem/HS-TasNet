@@ -21,8 +21,8 @@ import tempfile
 import numpy as np
 import torch
 
-from hs_tasnet.model import StreamingHSTasNet, VERSION
-from hs_tasnet._checkpoint.codec import CODEC, pack, unpack
+from stemgenrt.model import StemgenRT58, VERSION
+from stemgenrt._checkpoint.codec import CODEC, pack, unpack
 
 SCHEMA = "hs-tasnet-eight-state-training-v1"
 NATIVE_SCHEMA = "latency58-branch-memory-inference-v1"
@@ -86,7 +86,7 @@ class ParameterEMA:
     """One FP32 parameter update after each Adam update; fixed buffers stay fixed."""
 
     def __init__(self, model, *, decay=.995, base_state_sha256=None):
-        _require(type(model) is StreamingHSTasNet and type(decay) is float
+        _require(type(model) is StemgenRT58 and type(decay) is float
                  and math.isfinite(decay) and 0 <= decay < 1, "Invalid EMA model or decay")
         self.decay, self.updates = decay, 0
         self.architecture = copy.deepcopy(model.architecture_metadata)
@@ -98,7 +98,7 @@ class ParameterEMA:
         self._validate_model(model)
 
     def _validate_model(self, model):
-        _require(type(model) is StreamingHSTasNet and model.architecture_metadata == self.architecture,
+        _require(type(model) is StemgenRT58 and model.architecture_metadata == self.architecture,
                  "EMA architecture differs")
         parameters, buffers = dict(model.named_parameters()), dict(model.named_buffers())
         _require(list(parameters) == list(self.parameters) and len(parameters) == 40
@@ -176,7 +176,7 @@ class ParameterEMA:
 def _new_model():
     # Constructing a loader must not consume the training RNG being restored.
     with torch.random.fork_rng(devices=[]), torch.device("cpu"):
-        return StreamingHSTasNet()
+        return StemgenRT58()
 
 
 def _read(path, digest=None):
@@ -330,7 +330,7 @@ def _validate_teacher(config, provenance):
 def save_training_checkpoint(path, model, optimizer, ema, *, step, next_sample_index,
                              config, data_identity, metadata=None, compressed=True):
     """Atomically replace one checkpoint after a complete Adam/EMA update."""
-    _require(type(model) is StreamingHSTasNet and isinstance(config, dict)
+    _require(type(model) is StemgenRT58 and isinstance(config, dict)
              and type(ema) is ParameterEMA and ema.updates == step, "Invalid training checkpoint objects")
     _validate_teacher(config, model.provenance)
     _validate_cursor(step, next_sample_index, config)
@@ -382,7 +382,7 @@ def _training_model(payload):
 
 @dataclass
 class TrainingState:
-    model: StreamingHSTasNet
+    model: StemgenRT58
     optimizer: torch.optim.Adam
     ema: ParameterEMA
     step: int

@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 import torch
 
-from hs_tasnet import losses, teacher
-from hs_tasnet._losses.teacher import contribution
+from stemgenrt import losses, teacher
+from stemgenrt._losses.teacher import contribution
 
 
 @pytest.fixture(autouse=True)

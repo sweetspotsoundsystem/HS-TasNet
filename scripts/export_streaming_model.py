@@ -3,8 +3,8 @@ import argparse
 from pathlib import Path
 
 import torch
-from hs_tasnet.checkpoint import load_model
-from hs_tasnet.export import export_model
+from stemgenrt.checkpoint import load_model
+from stemgenrt.export import export_model
 
 
 def main():

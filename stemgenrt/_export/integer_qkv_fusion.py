@@ -106,11 +106,11 @@ def build(parent, *, expected_parent_sha256=PARENT_SHA):
             and [v.SerializeToString() for v in graph.graph.output] == [v.SerializeToString() for v in parent.graph.output],
             "Public interface changed")
     properties = {v.key: v.value for v in graph.metadata_props}
-    properties.update({"hs_tasnet.runtime_variant": VERSION,
-        "hs_tasnet.parent_graph_sha256": expected_parent_sha256,
-        "hs_tasnet.attention_fusion_exporter_sha256": sha(__file__),
-        "hs_tasnet.attention_projection_fusion": "QKV columns concatenated; FP64 product and original query last-frame slice",
-        "hs_tasnet.deployment_quality_status": "unmeasured; parent score does not score this graph"})
+    properties.update({"stemgenrt.runtime_variant": VERSION,
+        "stemgenrt.parent_graph_sha256": expected_parent_sha256,
+        "stemgenrt.attention_fusion_exporter_sha256": sha(__file__),
+        "stemgenrt.attention_projection_fusion": "QKV columns concatenated; FP64 product and original query last-frame slice",
+        "stemgenrt.deployment_quality_status": "unmeasured; parent score does not score this graph"})
     helper.set_model_props(graph, properties)
     onnx.checker.check_model(graph, full_check=True)
     return graph, {"version": VERSION, "original_projections": proofs,

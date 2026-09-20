@@ -1,11 +1,14 @@
-# HS-TasNet
+# StemgenRT-5.8
 
 Stereo streaming music separation into **drums, bass, vocals and other**.
 The current model combines spectral and waveform branches, causal attention,
 and recurrent branch memories. It uses **1024-sample analysis, 256-sample
 synthesis, 128-sample hops and eight explicit FP32 states** at 44.1 kHz.
-The graph delays audio by 128 samples. StemgenRT's additional 128-sample worker
-queue gives 256 samples / 5.80 ms total algorithmic latency.
+The **5.8** suffix identifies the latency variant: 128 samples of graph delay
+plus StemgenRT's 128-sample worker queue give 256 samples at 44.1 kHz, rounded
+to **5.8 ms of graph-plus-host algorithmic latency**, excluding audio-device
+latency. Model revisions and Python package versions are tracked separately
+from this latency suffix.
 
 ## Run the released model
 
@@ -17,7 +20,7 @@ python examples/separate_streaming.py --help
 
 ```python
 import numpy as np
-from hs_tasnet import StreamingSeparator
+from stemgenrt import StreamingSeparator
 
 separator = StreamingSeparator("models/hop128.onnx")
 audio = np.zeros((2, 44100), dtype=np.float32)
@@ -40,9 +43,9 @@ python -m pip install -e '.[training,onnx,test]'
 
 ```python
 import torch
-from hs_tasnet import StreamingHSTasNet, render_scored_context
+from stemgenrt import StemgenRT58, render_scored_context
 
-model = StreamingHSTasNet()  # Untrained weights; this does not load the release.
+model = StemgenRT58()  # Untrained weights; this does not load the release.
 audio = torch.randn(1, 2, 768) * .02
 scored = render_scored_context(model, audio, warmup_samples=256, carry_state=True)
 scored.raw.square().mean().backward()
@@ -60,19 +63,19 @@ provide an authenticated native checkpoint or explicitly start from scratch.
 
 | Module | Responsibility |
 | --- | --- |
-| `hs_tasnet.model` | Current native model, states and detached context |
-| `hs_tasnet.data` | Portable manifests and deterministic training augmentation |
-| `hs_tasnet.losses` | Whole-group objectives and one Adam/EMA update |
-| `hs_tasnet.checkpoint` | Native checkpoint authentication and complete recovery |
-| `hs_tasnet.trainer` | Portable finite training and resume |
-| `hs_tasnet.evaluation` | Physical alignment and per-stem metrics |
-| `hs_tasnet.export` | Current fixed-geometry ONNX export |
-| `hs_tasnet.streaming` | Released and checksum-pinned custom ONNX inference |
+| `stemgenrt.model` | Current native model, states and detached context |
+| `stemgenrt.data` | Portable manifests and deterministic training augmentation |
+| `stemgenrt.losses` | Whole-group objectives and one Adam/EMA update |
+| `stemgenrt.checkpoint` | Native checkpoint authentication and complete recovery |
+| `stemgenrt.trainer` | Portable finite training and resume |
+| `stemgenrt.evaluation` | Physical alignment and per-stem metrics |
+| `stemgenrt.export` | Current fixed-geometry ONNX export |
+| `stemgenrt.streaming` | Released and checksum-pinned custom ONNX inference |
 
-Version 0.4 removes the original configurable `HSTasNet`, its trainer, and the
-earlier four-state model. `StreamingHSTasNet` now denotes only the current
-eight-state architecture. `research/` is ignored local experimentation; it is
-not required for imports, tests or distributions. The complete earlier source
+`StemgenRT58` denotes the current eight-state architecture. Earlier configurable
+and four-state models and their APIs have been removed. `research/` is ignored
+local experimentation and is not required for imports, tests or distributions.
+The complete earlier source
 snapshot remains in git history; see [provenance and migration](docs/provenance.md).
 
 The implementation builds on [HS-TasNet](https://arxiv.org/abs/2402.17701) and

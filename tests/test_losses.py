@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from hs_tasnet import losses
+from stemgenrt import losses
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -148,7 +148,7 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, e
     This isolates the accumulation protocol without a costly full-size model;
     model streaming/context parity has separate tests.
     """
-    import hs_tasnet.model
+    import stemgenrt.model
 
     # Isolate this fixture from test order. Accumulating a million FP32 linear
     # products in one batch versus B4/B1 partitions can itself exceed the VJP
@@ -173,7 +173,7 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, e
         last_coordinates = raw.detach(), deployed.detach()
         return SimpleNamespace(raw=raw, deployed=deployed, initial_state_detached=True, flush_hops=1)
 
-    monkeypatch.setattr(hs_tasnet.model, "render_scored_context", render)
+    monkeypatch.setattr(stemgenrt.model, "render_scored_context", render)
     generator = torch.Generator().manual_seed(44)
     targets = .02 * torch.randn(16, 4, 2, 128 + 44160, generator=generator)
     targets[:3, 2] = 0
@@ -191,7 +191,7 @@ def test_output_vjp_replay_matches_full_graph_parameter_gradients(monkeypatch, e
             result.raw, result.deployed, truth[..., 128:], audio[..., 128:],
             **({"extra_ordinary_primary_sdr_weight": extra} if group == "ordinary" else {})).total
         if teacher_coefficient and group == "ordinary":
-            from hs_tasnet._losses.teacher import contribution
+            from stemgenrt._losses.teacher import contribution
             reference_loss = reference_loss + teacher_coefficient * contribution(
                 result.deployed, teacher_targets, truth[..., 128:], audio[..., 128:],
                 losses.prepare_reduction(truth[..., 128:])).total
@@ -249,7 +249,7 @@ def test_primary_sdr_increment_preserves_absence_anchor_and_partial_tail(silent)
 
 @pytest.mark.parametrize("stop_group", ["ordinary", "auxiliary"])
 def test_grouped_update_has_one_commit_boundary_and_can_retry_interruption(monkeypatch, stop_group):
-    import hs_tasnet.checkpoint as checkpoint
+    import stemgenrt.checkpoint as checkpoint
 
     class TinyModel(torch.nn.Module):
         architecture_metadata = {"test": "40 small FP32 parameters"}
@@ -259,7 +259,7 @@ def test_grouped_update_has_one_commit_boundary_and_can_retry_interruption(monke
             self.values = torch.nn.ParameterList([
                 torch.nn.Parameter(torch.tensor([.01 * (index + 1)])) for index in range(40)])
 
-    monkeypatch.setattr(checkpoint, "StreamingHSTasNet", TinyModel)
+    monkeypatch.setattr(checkpoint, "StemgenRT58", TinyModel)
     model = TinyModel().train()
     optimizer = torch.optim.Adam(model.parameters(), lr=6e-5, foreach=False)
     ema = checkpoint.ParameterEMA(model)

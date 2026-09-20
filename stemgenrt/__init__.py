@@ -4,7 +4,7 @@ PyTorch is loaded only when a native-model API is requested.
 """
 from importlib import import_module
 
-__all__ = ["StreamingSeparator", "StreamingHSTasNet", "StreamingState", "render_scored_context"]
+__all__ = ["StreamingSeparator", "StemgenRT58", "StreamingState", "render_scored_context"]
 
 
 def __getattr__(name):

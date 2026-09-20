@@ -1,4 +1,4 @@
-"""Frozen, dependency-light metrics for the HS-TasNet evaluator.
+"""Frozen, dependency-light metrics for the StemgenRT-5.8 evaluator.
 
 The functions in this module deliberately use only NumPy.  They operate on
 channel-first audio and never perform permutation or delay searches.

@@ -5,13 +5,13 @@ import torch
 from . import helpers as export_helpers
 from .helpers import require, model_state_sha256
 from ..model import (
-    StreamingHSTasNet, FEATURE_HISTORY, HOP, PUBLIC_FUSION_SCALE,
+    StemgenRT58, FEATURE_HISTORY, HOP, PUBLIC_FUSION_SCALE,
     SOURCE_ORDER, SYNTHESIS_SAMPLES, corrected_estimates,
 )
 
 def interface(model):
-    require(type(model) is StreamingHSTasNet,
-            "Export requires the current eight-state StreamingHSTasNet")
+    require(type(model) is StemgenRT58,
+            "Export requires the current eight-state StemgenRT58")
     require(model.sample_rate == 44100 and model.hop_samples == 128
             and model.graph_alignment_samples == 128,
             "The current model requires 44100 Hz and a fixed 128-sample hop")

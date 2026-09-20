@@ -148,9 +148,9 @@ def rewrite(graph):
     require([t.SerializeToString() for t in graph.graph.initializer] ==
             [t.SerializeToString() for t in original.graph.initializer], "Initializer bytes changed")
     metadata = {item.key: item.value for item in graph.metadata_props}
-    metadata.update({"hs_tasnet.runtime_variant": "temporal-attention-hop128-ten-u8s8-fp64-quantizer-ancestors-v1",
-                     "hs_tasnet.native_host_qualified": "false",
-                     "hs_tasnet.precise_node_count": str(len(precise))})
+    metadata.update({"stemgenrt.runtime_variant": "temporal-attention-hop128-ten-u8s8-fp64-quantizer-ancestors-v1",
+                     "stemgenrt.native_host_qualified": "false",
+                     "stemgenrt.precise_node_count": str(len(precise))})
     helper.set_model_props(graph, metadata)
     onnx.checker.check_model(graph, full_check=True)
     return graph

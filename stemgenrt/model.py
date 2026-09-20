@@ -1,4 +1,4 @@
-"""The current eight-state HS-TasNet model and detached training context.
+"""The current eight-state StemgenRT-5.8 model and detached training context.
 
 Constructing a model initializes untrained parameters. Checkpoints and ONNX
 inference are separate APIs; no weights are downloaded or loaded on import.
@@ -20,7 +20,7 @@ from ._model.dsp import (
     corrected_estimates, cross_component_correction, require,
 )
 
-__all__ = ["StreamingHSTasNet", "StreamingState", "render_scored_context"]
+__all__ = ["StemgenRT58", "StreamingState", "render_scored_context"]
 VERSION = "latency58-attention-private-branch-gru500-zero-projections-v1"
 PRECISION_POLICY = "latency58-asymmetric-bf16-learned-fp32-synthesis-state-v1"
 
@@ -136,7 +136,7 @@ class ContextOutput:
     flush_hops: int
 
 
-class StreamingHSTasNet(nn.Module):
+class StemgenRT58(nn.Module):
     """Four-stem stereo separator with 128-sample hops and eight FP32 states.
 
     ``render`` accepts a whole number of hops, while ``forward_chunk`` accepts
@@ -386,7 +386,7 @@ def render_scored_context(model, mixture, *, warmup_samples, carry_state):
             and warmup_samples % 128 == 0 and mixture.ndim == 3 and mixture.shape[1] == 2
             and mixture.shape[-1] > warmup_samples and mixture.dtype == torch.float32,
             "Invalid branch_memory training context")
-    require(type(model) is StreamingHSTasNet, "Require the branch_memory model")
+    require(type(model) is StemgenRT58, "Require the branch_memory model")
     state = model.warm_state(mixture[..., :warmup_samples]).detached()
     require(all(not value.requires_grad and value.grad_fn is None for value in state), "Warmup retained gradients")
     score = mixture[..., warmup_samples:]

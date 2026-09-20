@@ -8,7 +8,7 @@ import struct
 import numpy as np
 import pytest
 
-from hs_tasnet.streaming import StreamingSeparator
+from stemgenrt.streaming import StreamingSeparator
 
 
 ROOT = Path(__file__).resolve().parents[1]

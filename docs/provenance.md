@@ -1,5 +1,13 @@
 # Provenance and migration
 
+The current model is named **StemgenRT-5.8**; see the
+[model overview](../README.md) for the latency suffix definition. Its ancestry
+remains [HS-TasNet](https://arxiv.org/abs/2402.17701). The Python distribution is
+`StemgenRT`: update imports to `stemgenrt`, construct the native model with
+`StemgenRT58()`, and use the `stemgenrt-train` command. Previous package and
+class aliases are removed. New exports use the `stemgenrt.*` metadata namespace;
+the authenticated released graph and native checkpoint formats are preserved.
+
 The complete research publication before cleanup is preserved in commit
 [`a70da5ead2babb01f5d70d04b85538150ad5a41e`](https://github.com/sweetspotsoundsystem/HS-TasNet/tree/a70da5ead2babb01f5d70d04b85538150ad5a41e).
 It includes the original source inventory, frozen four-second training plan,
@@ -11,9 +19,9 @@ archive tag is required.
 ## Maintained implementation
 
 The current eight-state architecture was extracted without changing parameter
-names, buffer names, state shapes, metadata/schema identifiers or neural and
+names, buffer names, state shapes, checkpoint schema identifiers or neural and
 synthesis arithmetic. Its full implementation now lives in the installed
-`hs_tasnet` package. The historical class inheritance chain is replaced by one
+`stemgenrt` package. The historical class inheritance chain is replaced by one
 current model and small DSP helpers.
 
 The crop/pitch/remix recipes and weighted ordinary/auxiliary objectives retain
@@ -30,9 +38,9 @@ Keep a running historical job on its original source checkout.
 
 ## Removed APIs and local research
 
-The original configurable `HSTasNet`, `Trainer`, `MusDB18HQ`, original ONNX
-exporter, and the earlier four-state `StreamingHSTasNet` implementation are
-removed. The public `StreamingHSTasNet` name now refers to the current model.
+The original configurable model, trainer, dataset class and ONNX exporter,
+and the earlier four-state implementation are removed. `StemgenRT58` refers
+only to the current eight-state model.
 Four-state imports, graph downloads and legacy training configurations are no
 longer supported. Existing users who require them should pin the preserved
 pre-cleanup commit.

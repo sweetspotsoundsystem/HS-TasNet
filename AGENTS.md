@@ -1,5 +1,5 @@
 Maintain the current eight-state model and its matching training, loss, data,
-checkpoint, evaluation and export code together under hs_tasnet/. See
+checkpoint, evaluation and export code together under stemgenrt/. See
 CONTRIBUTING.md. The supported geometry is 1024-sample analysis, 256-sample
 synthesis and 128-sample hops. Do not reintroduce the removed configurable or
 four-state models.

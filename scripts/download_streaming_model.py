@@ -10,7 +10,7 @@ from urllib.request import urlopen
 
 
 MODELS = json.loads((Path(__file__).resolve().parents[1]
-                     / "hs_tasnet/streaming_models.json").read_text())
+                     / "stemgenrt/streaming_models.json").read_text())
 
 
 def digest(path):
