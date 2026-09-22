@@ -64,8 +64,8 @@ def advance(candidate, optimizer, ema, step):
     return float(loss.detach())
 
 
-@pytest.mark.parametrize('with_teacher', [False, True])
-def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher):
+@pytest.mark.parametrize('with_teacher,track_sampling', [(False, 'uniform'), (True, 'uniform'), (False, 'duration')])
+def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher, track_sampling):
     torch.set_num_threads(1)
     random.seed(192); np.random.seed(192); torch.manual_seed(192)
     candidate = model()
@@ -73,6 +73,14 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher)
     ema = ParameterEMA(candidate)
     config = {"steps": 3, "batch_size": 1, "data_start": 400, "lr": 3e-5,
               "precision": "fp32", "seed": 192}
+    if track_sampling == "duration":
+        from stemgenrt.data import policy
+        config["track_sampling"] = "duration"
+        with pytest.raises(ValueError, match="track sampling policy"):
+            save_training_checkpoint(tmp_path / "missing-policy.pt", candidate, optimizer, ema,
+                step=0, next_sample_index=400, config=config, data_identity={})
+        assert not (tmp_path / "missing-policy.pt").exists()
+        candidate.provenance["branch_memory_current_stage_augmentation"] = policy("duration")
     if with_teacher:
         from stemgenrt import teacher
         specification = teacher.specification(1.)
@@ -108,6 +116,9 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher)
     with pytest.raises(ValueError, match="configuration"):
         load_training_checkpoint(path, config={**config, "lr": 1e-3}, data_identity=data)
     with pytest.raises(ValueError, match="configuration"):
+        load_training_checkpoint(path, config={**config, "track_sampling":
+            "uniform" if track_sampling == "duration" else "duration"}, data_identity=data)
+    with pytest.raises(ValueError, match="configuration"):
         load_training_checkpoint(path, config={**config, "extra_ordinary_primary_sdr_weight": .2},
                                  data_identity=data)
     restored = load_training_checkpoint(path, sha256=bound["sha256"], config=config, data_identity=data)
@@ -128,14 +139,19 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher)
     assert state_sha256(raw.state_dict()) == saved_raw
     if with_teacher:
         assert raw.provenance[teacher.PROVENANCE_KEY] == specification
+    if track_sampling == "duration":
+        assert raw.provenance["branch_memory_current_stage_augmentation"] == policy("duration")
     assert not raw.training and not any(p.requires_grad for p in raw.parameters())
     del raw
     averaged = load_model(path, expected_sha256=bound["sha256"], role="ema")
     assert averaged.provenance["checkpoint_weight_role"] == "averaged_inference"
     if with_teacher:
         assert averaged.provenance[teacher.PROVENANCE_KEY] == specification
+    if track_sampling == "duration":
+        assert averaged.provenance["branch_memory_current_stage_augmentation"] == policy("duration")
     assert tree_fingerprint(checkpoint._rng_state()) == inference_rng
     assert not torch.cuda.is_initialized()
+    path.unlink()
 
 
 def test_native_checkpoint_authentication_and_role(tmp_path):

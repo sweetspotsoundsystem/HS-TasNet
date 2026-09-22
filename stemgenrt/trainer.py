@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 
 from .checkpoint import ParameterEMA, load_model, load_training_checkpoint, save_training_checkpoint, state_sha256
 from .data import (AbsoluteIndexSampler, CROP_SAMPLES, WARMUP_SAMPLES, audio_sha,
-                   batch_recipes, load_manifest, make_dataset, remix_batch, worker_init)
+                   batch_recipes, load_manifest, make_dataset, remix_batch, worker_init, policy as data_policy)
 from .losses import grouped_update, _teacher_weight
 from .model import StemgenRT58
 
@@ -41,6 +41,7 @@ class TrainingConfig:
     seed: int = 20261102
     data_seed: int = 60
     data_start: int = 0
+    track_sampling: str = "uniform"
     root_weights: dict[str, float] | None = None
     vocal_active_probability: float = .85
     ema_decay: float = .995
@@ -52,6 +53,8 @@ class TrainingConfig:
     teacher_checkpoint: str | None = None
 
     def validate(self):
+        if self.track_sampling not in ("uniform", "duration"):
+            raise ValueError("track_sampling must be uniform or duration")
         _teacher_weight(self.teacher_coefficient)
         if self.teacher_coefficient and (not self.teacher_checkpoint
                 or self.extra_ordinary_primary_sdr_weight != .2):
@@ -158,6 +161,8 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
     config = replace(config, root_weights=dict(root_weights)).validate()
     config_dict = asdict(config)
     # Preserve the exact configuration identity of existing baseline checkpoints.
+    if config.track_sampling == "uniform":
+        config_dict.pop("track_sampling")
     if config.extra_ordinary_primary_sdr_weight == 0:
         config_dict.pop("extra_ordinary_primary_sdr_weight")
     config_dict.pop("teacher_checkpoint")
@@ -195,6 +200,8 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
         model.training_precision = config.precision
         optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, foreach=False)
         ema = ParameterEMA(model, decay=float(config.ema_decay))
+        model.provenance = {**getattr(model, "provenance", {}),
+                           "branch_memory_current_stage_augmentation": data_policy(config.track_sampling)}
         if teacher_provider is not None or getattr(model, "provenance", {}).get("branch_memory_current_stage_teacher_supervision"):
             from .teacher import attach
             attach(model, teacher_provider.specification if teacher_provider is not None else None)

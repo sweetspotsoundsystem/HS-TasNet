@@ -83,6 +83,26 @@ Adam/EMA run. Its coefficient is saved in checkpoint configuration and cannot
 change during exact resume. The default is zero additional weight; baseline
 configuration serialization remains compatible with existing checkpoints.
 
+### Duration-weighted sampling experiment
+
+`configs/duration-weighted-training.json` keeps the primary SDR ablation's
+objective and schedule and sets `track_sampling="duration"`. Within each
+corpus, a track's probability is proportional to its effective frame count.
+Corpus weights remain unchanged. This reduces repeated exposure to short
+recordings; it does not add recordings or control artist diversity.
+
+Both original and expanded crops use the same integer duration weights.
+Corpus draws, vocal-anchor rules and augmentation settings are retained;
+the selected tracks and subsequent offset draws change. Samples remain
+deterministic by seed and absolute address across worker counts and resume.
+The default `track_sampling="uniform"` preserves the previous crop sequence.
+
+Start a fresh Adam/EMA run to change sampling. Duration mode and its policy
+are recorded in checkpoint configuration and provenance; exact resume rejects
+a different sampler. The supplied configuration uses no online teacher.
+This experiment changes training data exposure only: separation improvement
+has not been established, and inference geometry and latency are unchanged.
+
 ### Teacher-assisted experiment
 
 `configs/teacher-training.json` adds `teacher_coefficient=1.0` to the primary

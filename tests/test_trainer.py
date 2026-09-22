@@ -114,6 +114,7 @@ def test_learning_rate_uses_original_completed_update_schedule():
     {"device": "cpu", "precision": "bf16"}, {"root_weights": {"recordings": float("nan")}},
     {"extra_ordinary_primary_sdr_weight": -.2}, {"extra_ordinary_primary_sdr_weight": float("nan")},
     {"extra_ordinary_primary_sdr_weight": .4}, {"extra_ordinary_primary_sdr_weight": True},
+    {"track_sampling": "unknown"}, {"track_sampling": None},
 ])
 def test_config_rejects_incompatible_scientific_settings(changes):
     with pytest.raises(ValueError):
@@ -179,6 +180,7 @@ def test_resume_uses_restored_objects_cursor_identities_and_rng(harness, monkeyp
     expected_config.pop("extra_ordinary_primary_sdr_weight")  # Legacy baseline checkpoint identity.
     expected_config.pop("teacher_coefficient")
     expected_config.pop("teacher_checkpoint")
+    expected_config.pop("track_sampling")
     before_python, before_numpy, before_torch = random.getstate(), np.random.get_state(), torch.get_rng_state()
     generator = torch.Generator().manual_seed(173)
     resumed_torch = generator.get_state()
@@ -235,6 +237,17 @@ def test_primary_sdr_option_reaches_updates_and_checkpoint_config(harness, monke
     assert calls.saves[0]["config"]["extra_ordinary_primary_sdr_weight"] == .2
     saved_config = json.loads((tmp_path / "candidate/config.json").read_text())
     assert saved_config["extra_ordinary_primary_sdr_weight"] == .2
+
+
+def test_duration_sampler_is_bound_to_data_checkpoint_and_provenance(harness, tmp_path):
+    from stemgenrt.data import policy
+    config, _, calls, _ = harness
+    config = replace(config, track_sampling="duration", extra_ordinary_primary_sdr_weight=.2)
+    trainer.train(config, "train.json", tmp_path / "duration", stop_after=2)
+    assert calls.datasets[0][1]["track_sampling"] == "duration"
+    assert calls.saves[0]["config"]["track_sampling"] == "duration"
+    candidate = calls.updates[-1][2]
+    assert candidate.provenance["branch_memory_current_stage_augmentation"] == policy("duration")
 
 
 def test_resume_rejects_inconsistent_cursor_before_creating_run(harness, monkeypatch, tmp_path):
