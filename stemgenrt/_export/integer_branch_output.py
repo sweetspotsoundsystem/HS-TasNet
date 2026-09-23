@@ -23,13 +23,16 @@ def digest(value):
     return hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest()
 
 
-def build(parent, *, expected_parent_sha256="878c74694fa4c558de1c5a75837893a0afeadcf57f6e3b860d5904cab04e9fc9"):
+def build(parent, *, expected_parent_sha256="878c74694fa4c558de1c5a75837893a0afeadcf57f6e3b860d5904cab04e9fc9",
+          expected_weights=None):
     import onnx
     from onnx import TensorProto as T, helper, numpy_helper as nh
     from onnxruntime.quantization.quant_utils import quantize_data
     require(hashlib.sha256(parent.SerializeToString()).hexdigest()
             == expected_parent_sha256,
             "Start with the exact PR #15 graph")
+    if expected_weights is not None:
+        require(set(expected_weights) == set(TARGETS.values()), "Missing native branch matrices")
     graph = copy.deepcopy(parent)
     producers = {v: n for n in parent.graph.node for v in n.output}
     initializers = {v.name: v for v in parent.graph.initializer}
@@ -45,8 +48,18 @@ def build(parent, *, expected_parent_sha256="878c74694fa4c558de1c5a75837893a0afe
                 "Profiled matrix is shared or no longer a cast initializer")
         name = cast.input[0]
         weight = nh.to_array(initializers[name])
-        require(weight.shape == (500, 500) and weight.dtype == np.float32
-                and name == {"spec_memory_output": "onnx::MatMul_747", "waveform_memory_output": "onnx::MatMul_748"}[TARGETS[node.name]], "Wrong branch matrix identity or layout")
+        require(weight.shape == (500, 500) and weight.dtype == np.float32,
+                "Wrong branch matrix layout")
+        if expected_weights is None:
+            require(name == {"spec_memory_output": "onnx::MatMul_747",
+                             "waveform_memory_output": "onnx::MatMul_748"}[TARGETS[node.name]],
+                    "Wrong historical branch matrix identity")
+        else:
+            # Exporter-generated initializer numbers can change with the cache
+            # geometry. Authenticate the actual native matrix at this use site.
+            expected = expected_weights[TARGETS[node.name]]
+            require(expected.shape == weight.shape and expected.dtype == weight.dtype
+                    and digest(weight) == digest(expected), "Native branch matrix differs")
         channels = [quantize_data(np.ascontiguousarray(c), T.INT8, symmetric=True, reduce_range=True)
                     for c in weight.T]
         zero = np.asarray([c[0] for c in channels], np.int8).reshape(-1)
@@ -71,6 +84,7 @@ def build(parent, *, expected_parent_sha256="878c74694fa4c558de1c5a75837893a0afe
         removed_nodes.add(cast.name)
         removed_initializers.add(name)
         proof.append({"module": TARGETS[node.name], "initializer": name, "shape": list(weight.shape),
+            "native_matrix_authenticated": expected_weights is not None,
             "source_matrix_sha256": digest(weight), "quantized_matrix_sha256": digest(quantized),
             "scale_sha256": digest(scale), "weight_zero_points_all_zero": True,
             "maximum_unsigned_signed_pair_absolute_sum": 2 * 255 * 64,

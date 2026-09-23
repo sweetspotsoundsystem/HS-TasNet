@@ -21,8 +21,14 @@ def build(model, *, checkpoint_sha256=None):
     def digest(graph):
         return hashlib.sha256(graph.SerializeToString()).hexdigest()
     fourteen, fourteen_proof = integer_branch_gru.build(ten, expected_parent_sha256=digest(ten))
-    sixteen, sixteen_proof = integer_branch_output.build(fourteen, expected_parent_sha256=digest(fourteen))
-    graph, qkv_proof = integer_qkv.build(sixteen, expected_parent_sha256=digest(sixteen))
+    source_matrices = {name: getattr(model, name).weight.detach().cpu().numpy().T
+                       for name in integer_branch_output.TARGETS.values()}
+    sixteen, sixteen_proof = integer_branch_output.build(
+        fourteen, expected_parent_sha256=digest(fourteen), expected_weights=source_matrices)
+    attention_matrices = {f"/{name}/MatMul": getattr(model, name).weight.detach().cpu().numpy().T
+                          for name in ("temporal_query", "temporal_key", "temporal_value")}
+    graph, qkv_proof = integer_qkv.build(sixteen, expected_parent_sha256=digest(sixteen),
+                                       expected_weights=attention_matrices)
     reference, independent = make_reference(model, ten, ten_proof, fourteen, fourteen_proof,
                                             sixteen, sixteen_proof, graph, qkv_proof)
     require(state_sha256(model.state_dict()) == before, "Integer export changed source model tensors")

@@ -21,7 +21,7 @@ def digest(value):
     return hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest()
 
 
-def build(parent, *, expected_parent_sha256=PARENT_SHA):
+def build(parent, *, expected_parent_sha256=PARENT_SHA, expected_weights=None):
     import onnx
     from onnx import TensorProto as T, helper, numpy_helper as nh
 
@@ -31,11 +31,15 @@ def build(parent, *, expected_parent_sha256=PARENT_SHA):
     nodes = {node.name: node for node in parent.graph.node}
     producers = {value: node for node in parent.graph.node for value in node.output}
     initializers = {value.name: value for value in parent.graph.initializer}
+    if expected_weights is not None:
+        require(set(expected_weights) == {name for name, _, _ in TARGETS}, "Missing native attention matrices")
     removed, matrices, outputs, proofs = set(), [], [], []
     for name, expected_initializer, width in TARGETS:
         node = nodes[name]
         require(node.op_type == "MatMul" and len(node.input) == 2, "Attention projection changed")
         cast = producers[node.input[1]]
+        if expected_weights is not None:
+            expected_initializer = cast.input[0]
         require(cast.op_type == "Cast" and cast.input[0] == expected_initializer
                 and next(a.i for a in cast.attribute if a.name == "to") == T.DOUBLE
                 and sum(node.input[1] in n.input for n in parent.graph.node) == 1
@@ -43,9 +47,14 @@ def build(parent, *, expected_parent_sha256=PARENT_SHA):
                 "Matrix identity, FP64 cast or sharing changed")
         matrix = nh.to_array(initializers[expected_initializer])
         require(matrix.shape == (1000, width) and matrix.dtype == np.float32, "Matrix layout changed")
+        if expected_weights is not None:
+            expected = expected_weights[name]
+            require(expected.shape == matrix.shape and expected.dtype == matrix.dtype
+                    and digest(expected) == digest(matrix), "Native attention matrix differs")
         matrices.append(matrix)
         outputs.append(node.output[0])
         proofs.append({"node": name, "initializer": expected_initializer,
+                       "native_matrix_authenticated": expected_weights is not None,
                        "shape": list(matrix.shape), "source_matrix_sha256": digest(matrix)})
         removed.update((name, cast.name))
 
@@ -88,7 +97,7 @@ def build(parent, *, expected_parent_sha256=PARENT_SHA):
             rewritten.extend(replacements)
         elif node.name not in removed:
             rewritten.append(copy.deepcopy(node))
-    removed_weights = {name for _, name, _ in TARGETS}
+    removed_weights = {row["initializer"] for row in proofs}
     retained_weights = [copy.deepcopy(v) for v in parent.graph.initializer if v.name not in removed_weights]
     del graph.graph.node[:]
     graph.graph.node.extend(rewritten)

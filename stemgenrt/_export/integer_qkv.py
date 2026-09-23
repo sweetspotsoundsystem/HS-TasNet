@@ -17,12 +17,13 @@ def digest(value):
     return hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest()
 
 
-def build(parent, *, expected_parent_sha256=PARENT_SHA):
+def build(parent, *, expected_parent_sha256=PARENT_SHA, expected_weights=None):
     import onnx
     from onnx import TensorProto as T, helper, numpy_helper as nh
     from onnxruntime.quantization.quant_utils import quantize_data
 
-    fused, fusion_proof = fuse(parent, expected_parent_sha256=expected_parent_sha256)
+    fused, fusion_proof = fuse(parent, expected_parent_sha256=expected_parent_sha256,
+                              expected_weights=expected_weights)
     # Source-location metadata changes when the maintained exporter moves.
     # The parent digest plus the fusion transform's byte-preservation and
     # topology checks bind this intermediate without pinning metadata bytes.

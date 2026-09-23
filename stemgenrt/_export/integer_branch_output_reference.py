@@ -80,6 +80,7 @@ class BranchOutputIntegerReference(nn.Module):
         _, deployed = corrected_estimates(raw, history[..., -128:], m.fixed_residual_share.float())
         return (deployed, joined[..., -896:].float().clone(), (next_hidden * PUBLIC_FUSION_SCALE).float(),
                 frames[..., 128:].clone(), decoded[..., 128:].clone(),
-                keys[:, -31:].float().clone(), values[:, -31:].float().clone(),
+                keys[:, -(m.attention_window - 1):].float().clone(),
+                values[:, -(m.attention_window - 1):].float().clone(),
                 (next_spec_hidden * PUBLIC_FUSION_SCALE).float(),
                 (next_wave_hidden * PUBLIC_FUSION_SCALE).float())

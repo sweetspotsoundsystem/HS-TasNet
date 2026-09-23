@@ -51,11 +51,18 @@ scored = render_scored_context(model, audio, warmup_samples=256, carry_state=Tru
 scored.raw.square().mean().backward()
 ```
 
+The native model now defaults to 128 frames of causal attention. This adds
+73,728 bytes of attention state per stream, with the same learned tensors and
+256 samples of graph-plus-host algorithmic latency. Its separation quality and
+physical host performance still need qualification. The released ONNX graph
+keeps its 32-frame history. Checkpoint loading preserves the stored window;
+`StemgenRT58(attention_window=32)` constructs that historical native geometry.
+
 The maintained package includes deterministic crop/pitch/remix augmentation,
 the whole-group weighted source-view objective, Adam and EMA, lossless complete
 recovery, native/ONNX evaluation and verified export. Read the
 [training and evaluation guide](docs/training.md) for checkpoint requirements,
-portable manifests, the four-second recipe and commands. Native FP32 training
+portable manifests, the attention-128 experiment and commands. Native FP32 training
 weights cannot be reconstructed losslessly from the released integer graph;
 provide an authenticated native checkpoint or explicitly start from scratch.
 

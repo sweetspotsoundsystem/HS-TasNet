@@ -26,7 +26,8 @@ def interface(model):
     require(names == ("audio_history", "fusion_hidden", "spectral_numerator_tail", "waveform_tail",
                       "attention_keys", "attention_values", "spec_memory_hidden", "waveform_memory_hidden")
             and shapes == ((1, 2, 896), (2, 1, 1000), (1, 4, 2, 128), (1, 4, 2, 128),
-                           (1, 31, 64), (1, 31, 128), (1, 1, 500), (1, 1, 500)),
+                           (1, model.attention_window - 1, 64), (1, model.attention_window - 1, 128),
+                           (1, 1, 500), (1, 1, 500)),
             "The current eight-state interface changed")
     return {"state_names": names, "state_shapes": shapes,
             "input_names": ("audio_chunk", *names),

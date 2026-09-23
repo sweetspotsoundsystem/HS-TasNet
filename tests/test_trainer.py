@@ -16,8 +16,9 @@ from stemgenrt import trainer
 
 
 class TinyModel(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, *, attention_window=128):
         super().__init__()
+        self.attention_window = attention_window
         self.weight = torch.nn.Parameter(torch.tensor(.25))
         self.register_buffer("fixed", torch.tensor(1.))
 
@@ -115,6 +116,7 @@ def test_learning_rate_uses_original_completed_update_schedule():
     {"extra_ordinary_primary_sdr_weight": -.2}, {"extra_ordinary_primary_sdr_weight": float("nan")},
     {"extra_ordinary_primary_sdr_weight": .4}, {"extra_ordinary_primary_sdr_weight": True},
     {"track_sampling": "unknown"}, {"track_sampling": None},
+    {"attention_window": 64}, {"attention_window": True},
 ])
 def test_config_rejects_incompatible_scientific_settings(changes):
     with pytest.raises(ValueError):

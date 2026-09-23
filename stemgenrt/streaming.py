@@ -22,8 +22,9 @@ _STATES = {name: tuple(shape) for name, shape in _MODELS["current"]["states"].it
 class StreamingSeparator:
     """Separate float32 audio at 44.1 kHz, preserving every recurrent state.
 
-    The model has eight states. Custom exports must use this same fixed
-    interface and an explicitly supplied checksum.
+    The model has eight states with a 32- or 128-frame attention window.
+    Custom exports require an explicitly supplied checksum; all audio and
+    non-attention state dimensions remain fixed.
 
     ``process_chunk`` accepts [2, 128] and returns [4, 2, 128], aligned to
     the previous input hop. Its first result after reset is ``None``.
@@ -57,9 +58,14 @@ class StreamingSeparator:
             str(path), sess_options=options, providers=["CPUExecutionProvider"]
         )
         actual_inputs = {node.name: tuple(node.shape) for node in self._session.get_inputs()}
-        if actual_inputs != {"audio_chunk": (1, 2, 128), **_STATES}:
+        for window in (32, 128):
+            states = {**_STATES, "attention_keys": (1, window - 1, 64),
+                      "attention_values": (1, window - 1, 128)}
+            if actual_inputs == {"audio_chunk": (1, 2, 128), **states}:
+                self._state_shapes = states
+                break
+        else:
             raise ValueError("Model streaming interface differs")
-        self._state_shapes = _STATES
         inputs = {"audio_chunk": (1, 2, 128), **self._state_shapes}
         outputs = {"separated_chunk": (1, 4, 2, 128)}
         outputs.update({"next_" + name: shape for name, shape in self._state_shapes.items()})

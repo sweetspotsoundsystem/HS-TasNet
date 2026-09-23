@@ -28,6 +28,7 @@ from .model import StemgenRT58
 
 @dataclass(frozen=True)
 class TrainingConfig:
+    attention_window: int = 128
     steps: int = 2000
     batch_size: int = 16
     microbatch_size: int = 16
@@ -53,6 +54,8 @@ class TrainingConfig:
     teacher_checkpoint: str | None = None
 
     def validate(self):
+        if type(self.attention_window) is not int or self.attention_window not in (32, 128):
+            raise ValueError("attention_window must be 32 or 128")
         if self.track_sampling not in ("uniform", "duration"):
             raise ValueError("track_sampling must be uniform or duration")
         _teacher_weight(self.teacher_coefficient)
@@ -161,6 +164,8 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
     config = replace(config, root_weights=dict(root_weights)).validate()
     config_dict = asdict(config)
     # Preserve the exact configuration identity of existing baseline checkpoints.
+    if config.attention_window == 32:
+        config_dict.pop("attention_window")
     if config.track_sampling == "uniform":
         config_dict.pop("track_sampling")
     if config.extra_ordinary_primary_sdr_weight == 0:
@@ -195,7 +200,10 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
         if not 0 <= step < stop:
             raise ValueError("Resume must precede the requested stopping point")
     else:
-        model = load_model(checkpoint, expected_sha256=sha256, role=role) if checkpoint else StemgenRT58()
+        model = (load_model(checkpoint, expected_sha256=sha256, role=role) if checkpoint
+                 else StemgenRT58(attention_window=config.attention_window))
+        if model.attention_window != config.attention_window:
+            model = model.with_attention_window(config.attention_window)
         model.to(device).train().requires_grad_(True)
         model.training_precision = config.precision
         optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, foreach=False)

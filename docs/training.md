@@ -1,7 +1,9 @@
 # StemgenRT-5.8 training, evaluation and export
 
-StemgenRT-5.8 has one geometry: stereo 44.1 kHz input, 1024-sample
+StemgenRT-5.8 has fixed audio geometry: stereo 44.1 kHz input, 1024-sample
 analysis, 256-sample synthesis, a 128-sample hop and eight streaming states.
+The native default uses 128 attention frames; historical checkpoints retain
+32 frames. The window is recorded in model, checkpoint and export metadata.
 Install the appropriate PyTorch 2.8.0 build, then `pip install -e '.[training,onnx,test]'`.
 The export dependencies are pinned because integer lowering verifies a specific
 ONNX node inventory.
@@ -102,6 +104,38 @@ are recorded in checkpoint configuration and provenance; exact resume rejects
 a different sampler. The supplied configuration uses no online teacher.
 This experiment changes training data exposure only: separation improvement
 has not been established, and inference geometry and latency are unchanged.
+
+### Attention-128 experiment
+
+`configs/attention128-training.json` keeps the duration-weighted experiment's
+data, objective and 2,000-update schedule and sets `attention_window=128`.
+The attention caches hold 127 prior frames instead of 31. This increases state
+by 73,728 bytes per stream, without changing learned tensor shapes, analysis,
+synthesis, hop size, or the 256-sample graph-plus-host algorithmic delay.
+Separation improvement and physical real-time host performance are unmeasured.
+
+```bash
+python train_streaming.py --config configs/attention128-training.json \
+  --manifest data/train.json --validation-manifest data/valid.json \
+  --checkpoint models/parent-ema.pt --sha256 EXPECTED_CHECKPOINT_SHA256 \
+  --role ema --output runs/attention128
+```
+
+Fresh checkpoint initialization preserves every learned tensor and fixed
+buffer, then explicitly selects the configuration's window before creating
+Adam and EMA. Changing the window starts a new experiment. Exact resume keeps
+the saved geometry and rejects a changed window. Model loading for inference
+always preserves the checkpoint's window. ONNX export derives cache shapes
+from that model and verifies the corresponding eight-state trajectory.
+
+The older configurations explicitly select 32 frames and preserve their
+previous checkpoint identities. The default `TrainingConfig` selects 128;
+use the supplied attention-128 configuration for the matched scientific
+recipe, including duration sampling and the 0.4 ordinary SDR coefficient.
+Lossless portable recovery uses a separate schema for the new window and
+retains raw weights, all 40 Adam states, EMA, RNG and the absolute data cursor.
+Historical native inference files remain supported; packed research archives
+still require their archived decoder.
 
 ### Teacher-assisted experiment
 

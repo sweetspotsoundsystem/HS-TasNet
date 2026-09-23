@@ -14,7 +14,7 @@ MASK_BINS = 513
 CHANNELS, SOURCES, BASIS, EMBED = 2, 4, 1500, 500
 PUBLIC_FUSION_SCALE = 2.0**-18
 SOURCE_ORDER = ("drums", "bass", "vocals", "other")
-WINDOW, KEY, VALUE = 32, 64, 128
+KEY, VALUE = 64, 128
 
 def require(condition: bool, message: str):
     if not condition:
