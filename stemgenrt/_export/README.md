@@ -2,7 +2,7 @@
 
 The public API is `stemgenrt.export.export_model`. It accepts the maintained
 `StemgenRT58`, with its fixed 1024-sample analysis window, 256-sample
-synthesis frame, 128-sample hop and eight explicit states. Both export variants
+synthesis frame, 128-sample hop and the saved eight or nine explicit states. Both export variants
 preserve the source model, use self-contained weights and publish only after
 independent state-trajectory verification.
 

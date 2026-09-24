@@ -32,7 +32,7 @@ class AttentionQKVIntegerReference(nn.Module):
         self.model = model
 
     def forward(self, audio, history, hidden, spectral_tail, waveform_tail, past_keys, past_values,
-                spec_hidden, waveform_hidden):
+                spec_hidden, waveform_hidden, *filter_state):
         from ..model import PUBLIC_FUSION_SCALE
         from ..model import corrected_estimates
         m = self.model
@@ -77,6 +77,13 @@ class AttentionQKVIntegerReference(nn.Module):
         carrier = feature.float()
         rotated = torch.stack((-carrier[..., 1], carrier[..., 0]), -1)
         masked = carrier.unsqueeze(-1) * masks + rotated.unsqueeze(-1) * phase.unsqueeze(-2)
+        next_filter_state = ()
+        require(len(filter_state) == int(m.has_past_filter), "Past-filter state inventory differs")
+        if m.has_past_filter:
+            from .past_filter_reference import correction
+            residual, next_history = correction(m.past_filter.gate.weight, features, masks, carrier, filter_state[0])
+            masked = masked + residual
+            next_filter_state = (next_history,)
         masked = masked.permute(0, 5, 1, 2, 3, 4).contiguous()
         frames = torch.fft.irfft(torch.view_as_complex(masked), n=1024, dim=-1)[..., -256:]
         frames = frames[..., 0, :] * m.synthesis.spectral_window.float()
@@ -95,4 +102,4 @@ class AttentionQKVIntegerReference(nn.Module):
                 keys[:, -(m.attention_window - 1):].float().clone(),
                 values[:, -(m.attention_window - 1):].float().clone(),
                 (next_spec_hidden * PUBLIC_FUSION_SCALE).float(),
-                (next_wave_hidden * PUBLIC_FUSION_SCALE).float())
+                (next_wave_hidden * PUBLIC_FUSION_SCALE).float(), *next_filter_state)

@@ -1,4 +1,4 @@
-"""Verified, fixed-geometry ONNX export for the current eight-state model.
+"""Verified, fixed-geometry ONNX export for the current streaming model.
 
 FP32 is the default. The optional integer variant retains the current
 seventeen-product deployment transform and verifies against independently
@@ -93,7 +93,6 @@ def verify_onnx(model, path, *, hops=48, reference=None):
     """
     import copy
     import onnxruntime as ort
-    from .model import StreamingState
 
     require(isinstance(hops, int) and not isinstance(hops, bool) and hops >= 4,
             "Verification requires at least four recurrent hops")
@@ -140,7 +139,7 @@ def verify_onnx(model, path, *, hops=48, reference=None):
                 reference_outputs = reference(torch.from_numpy(audio), *native_state)
                 native_state = reference_outputs[1:]
             else:
-                native = reference.render(torch.from_numpy(audio), StreamingState(*native_state))
+                native = reference.render(torch.from_numpy(audio), reference.state_type(*native_state))
                 reference_outputs = (native.deployed, *native.state)
                 native_state = native.state
             runtime = session.run(list(contract["output_names"]),

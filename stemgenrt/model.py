@@ -1,4 +1,4 @@
-"""The current eight-state StemgenRT-5.8 model and detached training context.
+"""The current nine-state StemgenRT-5.8 model and detached training context.
 
 Constructing a model initializes untrained parameters. Checkpoints and ONNX
 inference are separate APIs; no weights are downloaded or loaded on import.
@@ -22,7 +22,9 @@ from ._model.dsp import (
 
 __all__ = ["StemgenRT58", "StreamingState", "render_scored_context"]
 LEGACY_VERSION = "latency58-attention-private-branch-gru500-zero-projections-v1"
-VERSION = "stemgenrt-branch-memory-attention128-v1"
+WINDOW_VERSION = "stemgenrt-branch-memory-attention128-v1"
+VERSION = "stemgenrt-shared-mask-past1-2-v1"
+from ._model.past_filter import SharedMaskPastFilter
 PRECISION_POLICY = "latency58-asymmetric-bf16-learned-fp32-synthesis-state-v1"
 
 # These checkpoint/export schema values describe the trained architecture.
@@ -100,6 +102,19 @@ _ARCHITECTURE = {'version': 'latency58-attention-private-branch-gru500-zero-proj
  'branch_memory_added_state_elements_per_stream': 1000}
 
 
+class _LegacyStreamingState(NamedTuple):
+    audio_history: torch.Tensor
+    fusion_hidden: torch.Tensor
+    spectral_numerator_tail: torch.Tensor
+    waveform_tail: torch.Tensor
+    attention_keys: torch.Tensor
+    attention_values: torch.Tensor
+    spec_memory_hidden: torch.Tensor
+    waveform_memory_hidden: torch.Tensor
+
+    def detached(self):
+        return type(self)(*(value.detach() for value in self))
+
 class StreamingState(NamedTuple):
     audio_history: torch.Tensor
     fusion_hidden: torch.Tensor
@@ -109,6 +124,7 @@ class StreamingState(NamedTuple):
     attention_values: torch.Tensor
     spec_memory_hidden: torch.Tensor
     waveform_memory_hidden: torch.Tensor
+    past_carrier_history: torch.Tensor
 
     def detached(self):
         return type(self)(*(value.detach() for value in self))
@@ -138,13 +154,14 @@ class ContextOutput:
 
 
 class StemgenRT58(nn.Module):
-    """Four-stem stereo separator with 128-sample hops and eight FP32 states.
+    """Four-stem stereo separator with 128-sample hops and nine FP32 states.
 
     ``render`` accepts a whole number of hops, while ``forward_chunk`` accepts
     exactly one. Returned audio has 128 samples of graph alignment. The host's
     separate 128-sample queue gives 256 samples of total algorithmic latency.
-    The current attention window is 128 frames. ``attention_window=32`` retains
-    the historical checkpoint geometry. Both windows use only received frames.
+    The current model uses 32 attention frames and two past carrier frames.
+    ``past_filter=False`` preserves historical eight-state checkpoints, with
+    either 32 or 128 attention frames. All modes use only received frames.
     CUDA training can set ``training_precision = "bf16"``; public states,
     synthesis, and parameters remain FP32.
     """
@@ -164,11 +181,14 @@ class StemgenRT58(nn.Module):
     flush_required = True
     flush_hops = 1
 
-    def __init__(self, *, attention_window=128):
+    def __init__(self, *, attention_window=32, past_filter=True):
         super().__init__()
         require(type(attention_window) is int and attention_window in (32, 128),
                 "Use the historical 32-frame or current 128-frame attention window")
+        require(type(past_filter) is bool and (not past_filter or attention_window == 32),
+                "The shared-mask model requires 32 attention frames")
         self.attention_window = attention_window
+        self.has_past_filter = past_filter
         # Keep parameter registration and initialization order checkpoint-stable.
         self.spec_encode = nn.Linear(CHANNELS * MASK_BINS * 2, EMBED)
         self.conv_encode = nn.Conv1d(CHANNELS, BASIS * 2, FEATURE_SAMPLES, stride=HOP)
@@ -202,6 +222,8 @@ class StemgenRT58(nn.Module):
         self.waveform_memory_output = nn.Linear(EMBED, EMBED, bias=False)
         nn.init.zeros_(self.spec_memory_output.weight)
         nn.init.zeros_(self.waveform_memory_output.weight)
+        if self.has_past_filter:
+            self.past_filter = SharedMaskPastFilter(lags=(1, 2))
         self.training_precision = "fp32"
         self.provenance = {"version": "cropped1024-asymmetric256-hop128-v1",
                            "initialization": "uninitialized_schema_only"}
@@ -209,9 +231,22 @@ class StemgenRT58(nn.Module):
     @property
     def architecture_metadata(self):
         architecture = copy.deepcopy(_ARCHITECTURE)
+        if self.has_past_filter:
+            parameters = sum(p.numel() for p in self.past_filter.parameters())
+            return {**architecture, "version": VERSION, "state_family": VERSION,
+                    "state_names": list(StreamingState._fields), "past_filter_lags": [1, 2],
+                    "past_filter_coefficient_source": "existing_source_masks",
+                    "past_filter_parameters": parameters,
+                    "past_filter_precision": "FP32 including learned projections",
+                    "past_filter_input": "post-private-memory normalized spectral features and existing source masks",
+                    "additional_neural_parameters": architecture["additional_neural_parameters"] + parameters,
+                    "additional_state_tensors": architecture["additional_state_tensors"] + 1,
+                    "additional_state_elements_per_stream": architecture["additional_state_elements_per_stream"] + 2 * 2 * 513 * 2,
+                    "additional_audio_buffering_samples": 0, "additional_fft_transforms": 0,
+                    "native_host_qualified": False, "quality_measured": False}
         if self.attention_window == 32:
             return architecture
-        return {**architecture, "version": VERSION, "state_family": VERSION,
+        return {**architecture, "version": WINDOW_VERSION, "state_family": WINDOW_VERSION,
                 "temporal_attention_window_frames": self.attention_window,
                 "temporal_attention_history_samples": (self.attention_window - 1) * HOP,
                 "additional_state_elements_per_stream": (self.attention_window - 1) * (KEY + VALUE) + 2 * EMBED,
@@ -219,13 +254,45 @@ class StemgenRT58(nn.Module):
                 "additional_audio_buffering_samples": 0,
                 "native_host_qualified": False, "quality_measured": False}
 
+    @property
+    def parameter_tensor_count(self):
+        return 41 if self.has_past_filter else 40
+
+    @property
+    def state_type(self):
+        return StreamingState if self.has_past_filter else _LegacyStreamingState
+
+    def with_past_filter(self):
+        """Initialize the current model from a historical 32-frame CPU parent.
+
+        Inherited tensor bytes and RNG streams are preserved. The new gate is
+        zero, so this conversion starts a new experiment with the same output.
+        """
+        require(not self.has_past_filter and self.attention_window == 32
+                and all(v.device.type == "cpu" and v.dtype == torch.float32 for v in self.state_dict().values()),
+                "Initialize from a historical 32-frame FP32 CPU model")
+        from .checkpoint import state_sha256
+        inherited = self.state_dict()
+        before = state_sha256(inherited)
+        with torch.random.fork_rng(devices=[]), torch.device("cpu"):
+            torch.manual_seed(20260923)
+            result = StemgenRT58()
+        result.load_state_dict({**inherited, "past_filter.gate.weight": result.past_filter.gate.weight}, strict=True)
+        require(state_sha256({k: v for k, v in result.state_dict().items() if k != "past_filter.gate.weight"}) == before
+                and state_sha256(self.state_dict()) == before, "Past-filter initialization changed parent weights")
+        result.provenance = {**copy.deepcopy(self.provenance), "past_filter_version": VERSION,
+                            "past_filter_parent_model_state_sha256": before, "past_filter_updates": 0,
+                            "quality_measured": False}
+        return result.eval().requires_grad_(False)
+
     def with_attention_window(self, window):
         """Copy weights into an explicitly selected geometry for a new run.
 
         Loading a checkpoint preserves its original window. Changing its window
         is a new experiment; prior quality measurements do not transfer.
         """
-        require(type(window) is int and window in (32, 128), "Unsupported attention window")
+        require(type(window) is int and window in (32, 128)
+                and (not self.has_past_filter or window == 32), "Unsupported attention window")
         from .checkpoint import state_sha256
         result = copy.deepcopy(self)
         result.attention_window = window
@@ -243,7 +310,9 @@ class StemgenRT58(nn.Module):
                   (batch_size, SOURCES, CHANNELS, HOP), (batch_size, SOURCES, CHANNELS, HOP),
                   (batch_size, self.attention_window - 1, KEY), (batch_size, self.attention_window - 1, VALUE),
                   (1, batch_size, EMBED), (1, batch_size, EMBED))
-        return StreamingState(*(torch.zeros(shape, dtype=torch.float32, device=device) for shape in shapes))
+        if self.has_past_filter:
+            shapes += ((batch_size, CHANNELS, 2, MASK_BINS, 2),)
+        return self.state_type(*(torch.zeros(shape, dtype=torch.float32, device=device) for shape in shapes))
 
     def _validate(self, audio, state):
         require(audio.ndim == 3 and audio.shape[0] > 0 and audio.shape[1] == CHANNELS
@@ -252,11 +321,13 @@ class StemgenRT58(nn.Module):
                 and self.output_source_scales.dtype == torch.float32, "Invalid branch-memory input")
         if state is None:
             return self.initial_state(audio.shape[0])
-        require(type(state) is StreamingState, "Use the distinct branch-memory state family")
+        require(type(state) is self.state_type, "Use the distinct branch-memory state family")
         shapes = ((audio.shape[0], CHANNELS, FEATURE_HISTORY), (2, audio.shape[0], 2 * EMBED),
                   (audio.shape[0], SOURCES, CHANNELS, HOP), (audio.shape[0], SOURCES, CHANNELS, HOP),
                   (audio.shape[0], self.attention_window - 1, KEY), (audio.shape[0], self.attention_window - 1, VALUE),
                   (1, audio.shape[0], EMBED), (1, audio.shape[0], EMBED))
+        if self.has_past_filter:
+            shapes += ((audio.shape[0], CHANNELS, 2, MASK_BINS, 2),)
         require(all(value.shape == shape and value.dtype == audio.dtype and value.device == audio.device
                     for value, shape in zip(state, shapes, strict=True)), "Branch-memory state geometry changed")
         return state
@@ -358,6 +429,10 @@ class StemgenRT58(nn.Module):
                 waveform_initial.to(torch.bfloat16) if bf16 else waveform_initial)
             spec_correction = self.spec_memory_output(spec_memory)
             waveform_correction = self.waveform_memory_output(waveform_memory)
+        if self.has_past_filter:
+            filter_history = state.past_carrier_history
+            if tail_only and feature.shape[2] > 1:
+                filter_history = self.past_filter.advance_history(torch.view_as_real(feature[:, :, :-1]), filter_history)
         if tail_only:
             spec_correction, waveform_correction = (value[:, -1:] for value in (spec_correction, waveform_correction))
             spec, waveform, refined = (value[:, -1:] for value in (spec, waveform, refined))
@@ -374,6 +449,10 @@ class StemgenRT58(nn.Module):
         masks = self._residual_source_softmax(spec_logits).permute(0, 2, 1, 3, 4, 5)
         carrier = torch.view_as_real(feature)
         masked = carrier.unsqueeze(-1) * masks + cross_component_correction(carrier, phase)
+        if self.has_past_filter:
+            with torch.autocast(audio.device.type, enabled=False):
+                carrier_residual, past_carrier_history = self.past_filter(spec.float(), masks, carrier, filter_history)
+            masked = masked + carrier_residual
         spectrum = torch.view_as_complex(masked.permute(0, 5, 1, 2, 3, 4).contiguous())
         spectral, spec_tail = self.synthesis.spectral(spectrum, state.spectral_numerator_tail)
         waveform_logits = waveform_logits.float().reshape(batch, frame_count, SOURCES, BASIS).transpose(-1, -2)
@@ -383,11 +462,12 @@ class StemgenRT58(nn.Module):
             decoded = F.linear(source_basis, self.waveform_decoder_weight.flatten(1).t(), bias=None)
         decoded = decoded.float().reshape(batch, SOURCES, frame_count, CHANNELS, SYNTHESIS_SAMPLES).permute(0, 1, 3, 2, 4)
         waveform_audio, wave_tail = self.synthesis.waveform(decoded, state.waveform_tail)
-        next_state = StreamingState(joined[..., -FEATURE_HISTORY:].clone(),
+        next_state = self.state_type(joined[..., -FEATURE_HISTORY:].clone(),
                                     hidden.float() * PUBLIC_FUSION_SCALE, spec_tail, wave_tail,
                                     attention_keys, attention_values,
                                     spec_hidden.float() * PUBLIC_FUSION_SCALE,
-                                    waveform_hidden.float() * PUBLIC_FUSION_SCALE)
+                                    waveform_hidden.float() * PUBLIC_FUSION_SCALE,
+                                    *((past_carrier_history,) if self.has_past_filter else ()))
         if tail_only:
             return next_state
         scales = self.output_source_scales[None, :, None, None]
@@ -406,13 +486,13 @@ class StemgenRT58(nn.Module):
         return self.forward(audio, state, return_raw=return_raw)
 
     def flush(self, state, *, return_raw=False):
-        require(type(state) is StreamingState, "Flush requires a branch-memory state")
+        require(type(state) is self.state_type, "Flush requires a branch-memory state")
         return self.forward_chunk(state.audio_history.new_zeros((state.audio_history.shape[0], CHANNELS, HOP)),
                                   state, return_raw=return_raw)
 
 
 def render_scored_context(model, mixture, *, warmup_samples, carry_state):
-    """Warm all eight states without gradients, then return aligned scored audio."""
+    """Warm all recurrent states without gradients, then return aligned scored audio."""
     require(carry_state is True and type(warmup_samples) is int and warmup_samples > 0
             and warmup_samples % 128 == 0 and mixture.ndim == 3 and mixture.shape[1] == 2
             and mixture.shape[-1] > warmup_samples and mixture.dtype == torch.float32,

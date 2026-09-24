@@ -16,9 +16,10 @@ from stemgenrt import trainer
 
 
 class TinyModel(torch.nn.Module):
-    def __init__(self, *, attention_window=128):
+    def __init__(self, *, attention_window=32, past_filter=True):
         super().__init__()
         self.attention_window = attention_window
+        self.has_past_filter = past_filter
         self.weight = torch.nn.Parameter(torch.tensor(.25))
         self.register_buffer("fixed", torch.tensor(1.))
 
@@ -179,6 +180,7 @@ def test_resume_uses_restored_objects_cursor_identities_and_rng(harness, monkeyp
     config, corpus, calls, _ = harness
     model, optimizer, ema = endpoint(2)
     expected_config = asdict(replace(config, root_weights=corpus.root_weights))
+    expected_config.pop("attention_window")
     expected_config.pop("extra_ordinary_primary_sdr_weight")  # Legacy baseline checkpoint identity.
     expected_config.pop("teacher_coefficient")
     expected_config.pop("teacher_checkpoint")

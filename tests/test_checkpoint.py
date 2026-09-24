@@ -1,4 +1,4 @@
-"""Checkpoint contracts exercised with the maintained eight-state model."""
+"""Checkpoint contracts exercised with the maintained streaming model."""
 from __future__ import annotations
 
 import gc
@@ -14,7 +14,7 @@ from stemgenrt.checkpoint import (
     ParameterEMA, file_sha256, load_model, load_native_checkpoint,
     load_training_checkpoint, save_training_checkpoint, state_sha256,
 )
-from stemgenrt.model import StemgenRT58, VERSION, LEGACY_VERSION, render_scored_context
+from stemgenrt.model import StemgenRT58, VERSION, WINDOW_VERSION, LEGACY_VERSION, render_scored_context
 
 
 def tree_fingerprint(value):
@@ -37,10 +37,10 @@ def tree_fingerprint(value):
     return digest.hexdigest()
 
 
-def model(window=128):
+def model(window=128, past_filter=False):
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(617)
-        result = StemgenRT58(attention_window=window).train()
+        result = StemgenRT58(attention_window=window, past_filter=past_filter).train()
         # Exercise the initially zero branch output projections as well.
         with torch.no_grad():
             for parameter in result.parameters():
@@ -64,18 +64,22 @@ def advance(candidate, optimizer, ema, step):
     return float(loss.detach())
 
 
-@pytest.mark.parametrize('with_teacher,track_sampling,window', [
-    (False, 'uniform', 32), (True, 'uniform', 32), (False, 'duration', 32), (False, 'duration', 128)])
-def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher, track_sampling, window):
+@pytest.mark.parametrize('with_teacher,track_sampling,window,past_filter', [
+    (False, 'uniform', 32, False), (True, 'uniform', 32, False),
+    (False, 'duration', 32, False), (False, 'duration', 128, False),
+    (False, 'duration', 32, True)])
+def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher, track_sampling, window, past_filter):
     torch.set_num_threads(1)
     random.seed(192); np.random.seed(192); torch.manual_seed(192)
-    candidate = model(window)
+    candidate = model(window, past_filter)
     optimizer = torch.optim.Adam(candidate.parameters(), lr=3e-5, foreach=False)
     ema = ParameterEMA(candidate)
     config = {"steps": 3, "batch_size": 1, "data_start": 400, "lr": 3e-5,
               "precision": "fp32", "seed": 192}
     if window == 128:
         config["attention_window"] = window
+    if past_filter:
+        config["past_filter"] = True
     if track_sampling == "duration":
         from stemgenrt.data import policy
         config["track_sampling"] = "duration"
@@ -126,6 +130,8 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher,
                                  data_identity=data)
     restored = load_training_checkpoint(path, sha256=bound["sha256"], config=config, data_identity=data)
     assert restored.step == 1 and restored.next_sample_index == 401 and restored.metadata == {"note": "test"}
+    assert restored.model.has_past_filter == past_filter
+    assert restored.model.parameter_tensor_count == 40 + int(past_filter)
     assert restored.model.attention_window == window
     assert state_sha256(restored.model.state_dict()) == saved_raw
     assert tree_fingerprint(restored.optimizer.state_dict()) == saved_optimizer
@@ -158,18 +164,18 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher,
     path.unlink()
 
 
-@pytest.mark.parametrize("window", (32, 128))
-def test_native_checkpoint_authentication_and_role(tmp_path, window):
+@pytest.mark.parametrize("window,past_filter", ((32, False), (128, False), (32, True)))
+def test_native_checkpoint_authentication_and_role(tmp_path, window, past_filter):
     torch.set_num_threads(1)
-    candidate = model(window)
+    candidate = model(window, past_filter)
     plan_sha = "d" * 64
-    prefix = "attention_window" if window == 128 else "branch_memory"
-    provenance = {**candidate.provenance, prefix + "_version": VERSION if window == 128 else LEGACY_VERSION,
+    prefix = "past_filter" if past_filter else "attention_window" if window == 128 else "branch_memory"
+    provenance = {**candidate.provenance, prefix + "_version": VERSION if past_filter else WINDOW_VERSION if window == 128 else LEGACY_VERSION,
         prefix + "_updates": 2, prefix + "_parent_updates": 10, "training_updates": 12,
         prefix + "_training_plan_sha256": plan_sha, prefix + "_all_neural_parameters_trained": True}
-    if window == 128:
-        provenance["attention_window_initial_model_state_sha256"] = "e" * 64
-    payload = {"schema": checkpoint.WINDOW_NATIVE_SCHEMA if window == 128 else checkpoint.NATIVE_SCHEMA,
+    if window == 128 or past_filter:
+        provenance[prefix + "_initial_model_state_sha256"] = "e" * 64
+    payload = {"schema": checkpoint.SHARED_NATIVE_SCHEMA if past_filter else checkpoint.WINDOW_NATIVE_SCHEMA if window == 128 else checkpoint.NATIVE_SCHEMA,
         "step": 2, "model": candidate.state_dict(),
         "model_state_sha256": state_sha256(candidate.state_dict()), "architecture": candidate.architecture_metadata,
         "fixed_buffers_sha256": state_sha256(dict(candidate.named_buffers())),
@@ -191,7 +197,7 @@ def test_native_checkpoint_authentication_and_role(tmp_path, window):
         load_model(path, expected_sha256=digest, role="ema")
     payload = torch.load(path, weights_only=True)
     payload["schema"] = checkpoint.NATIVE_SCHEMA if window == 128 else checkpoint.WINDOW_NATIVE_SCHEMA
-    with pytest.raises(ValueError, match="schema and attention window"):
+    with pytest.raises(ValueError, match="schema and model geometry"):
         checkpoint._native_payload_model(payload)
     path.unlink()
 

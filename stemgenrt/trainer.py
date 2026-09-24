@@ -1,4 +1,4 @@
-"""Portable training for the current eight-state model and weighted objective.
+"""Portable training for the current streaming model and weighted objective.
 
 Historical machine supervision and frozen trial receipts remain in the archived
 snapshot. This runner creates new runs; it never adopts an active research run.
@@ -28,7 +28,8 @@ from .model import StemgenRT58
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    attention_window: int = 128
+    attention_window: int = 32
+    past_filter: bool = True
     steps: int = 2000
     batch_size: int = 16
     microbatch_size: int = 16
@@ -54,6 +55,8 @@ class TrainingConfig:
     teacher_checkpoint: str | None = None
 
     def validate(self):
+        if type(self.past_filter) is not bool or (self.past_filter and self.attention_window != 32):
+            raise ValueError("past_filter requires a 32-frame attention window")
         if type(self.attention_window) is not int or self.attention_window not in (32, 128):
             raise ValueError("attention_window must be 32 or 128")
         if self.track_sampling not in ("uniform", "duration"):
@@ -164,6 +167,8 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
     config = replace(config, root_weights=dict(root_weights)).validate()
     config_dict = asdict(config)
     # Preserve the exact configuration identity of existing baseline checkpoints.
+    if not config.past_filter:
+        config_dict.pop("past_filter")
     if config.attention_window == 32:
         config_dict.pop("attention_window")
     if config.track_sampling == "uniform":
@@ -201,9 +206,13 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
             raise ValueError("Resume must precede the requested stopping point")
     else:
         model = (load_model(checkpoint, expected_sha256=sha256, role=role) if checkpoint
-                 else StemgenRT58(attention_window=config.attention_window))
+                 else StemgenRT58(attention_window=config.attention_window, past_filter=config.past_filter))
         if model.attention_window != config.attention_window:
             model = model.with_attention_window(config.attention_window)
+        if config.past_filter and not model.has_past_filter:
+            model = model.with_past_filter()
+        if model.has_past_filter != config.past_filter:
+            raise ValueError("A trained past filter cannot be discarded during initialization")
         model.to(device).train().requires_grad_(True)
         model.training_precision = config.precision
         optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, foreach=False)

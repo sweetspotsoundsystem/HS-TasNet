@@ -1,4 +1,4 @@
-"""Faithful FP32 ONNX lowering of the current eight-state streaming model."""
+"""Faithful FP32 ONNX lowering of the current streaming streaming model."""
 from __future__ import annotations
 import copy
 import torch
@@ -11,7 +11,7 @@ from ..model import (
 
 def interface(model):
     require(type(model) is StemgenRT58,
-            "Export requires the current eight-state StemgenRT58")
+            "Export requires the current streaming StemgenRT58")
     require(model.sample_rate == 44100 and model.hop_samples == 128
             and model.graph_alignment_samples == 128,
             "The current model requires 44100 Hz and a fixed 128-sample hop")
@@ -25,10 +25,12 @@ def interface(model):
     shapes = tuple(tuple(value.shape) for value in state)
     require(names == ("audio_history", "fusion_hidden", "spectral_numerator_tail", "waveform_tail",
                       "attention_keys", "attention_values", "spec_memory_hidden", "waveform_memory_hidden")
+                      + (("past_carrier_history",) if model.has_past_filter else ())
             and shapes == ((1, 2, 896), (2, 1, 1000), (1, 4, 2, 128), (1, 4, 2, 128),
                            (1, model.attention_window - 1, 64), (1, model.attention_window - 1, 128),
-                           (1, 1, 500), (1, 1, 500)),
-            "The current eight-state interface changed")
+                           (1, 1, 500), (1, 1, 500))
+                           + (((1, 2, 2, 513, 2),) if model.has_past_filter else ()),
+            "The current streaming interface changed")
     return {"state_names": names, "state_shapes": shapes,
             "input_names": ("audio_chunk", *names),
             "output_names": ("separated_chunk", *("next_" + name for name in names)),
@@ -55,9 +57,30 @@ class _RFFT1024(torch.autograd.Function):
         return result.setType(audio.type().with_sizes([audio.type().sizes()[0], 513, 2]))
 
 
+def one_hop_shared_filter(kernel, features, masks, carrier, history):
+    """Batch-one export of both native taps with the same source centering.
+
+    Gate order is channel, past lag, real/imaginary component, source. Current
+    frequency masks are reused for both lags. No future carrier is accessed.
+    """
+    gates = kernel.gate(features).tanh().reshape(1, 2, 2, 1, 2, 4)
+    coefficients = masks[:, :, :, 1:-1] * gates
+    coefficients = coefficients - coefficients.mean(dim=-1, keepdim=True)
+    past = torch.flip(history, dims=(2,))[:, :, :, 1:-1]
+    real = past[..., 0, None] * coefficients[..., 0, :] - past[..., 1, None] * coefficients[..., 1, :]
+    imag = past[..., 0, None] * coefficients[..., 1, :] + past[..., 1, None] * coefficients[..., 0, :]
+    correction = torch.stack((real.sum(dim=2, keepdim=True), imag.sum(dim=2, keepdim=True)), dim=-2)
+    correction = torch.nn.functional.pad(correction, (0, 0, 0, 0, 1, 1))
+    return correction, torch.cat((history[:, :, 1:], carrier), dim=2)
+
 def make_export_copy(model):
     """Build only a separate export copy; the complete deployed residual is formed once."""
     interface(model)
+    if model.has_past_filter:
+        require(model.past_filter.lags == (1, 2) and tuple(model.past_filter.gate.weight.shape) == (32, 500)
+                and model.past_filter.features == 500 and model.past_filter.bins == 513
+                and model.past_filter.channels == 2 and model.past_filter.sources == 4,
+                "Fixed-hop past-filter geometry changed")
     require(all(value.dtype == torch.float32 and bool(torch.isfinite(value).all())
                 for value in model.state_dict().values()),
             "Export requires finite FP32 model tensors")
@@ -128,6 +151,12 @@ def make_export_copy(model):
             phase = copied.phase_coefficients(spec_features)
             quadrature = torch.stack((-feature_ri[..., 1], feature_ri[..., 0]), -1)
             masked_ri = feature_ri.unsqueeze(-1) * masks + quadrature.unsqueeze(-1) * phase.unsqueeze(-2)
+            filter_state = ()
+            if copied.has_past_filter:
+                carrier_residual, next_history = one_hop_shared_filter(
+                    copied.past_filter, spec_features, masks, feature_ri, states[8])
+                masked_ri = masked_ri + carrier_residual
+                filter_state = (next_history,)
             source_ri = masked_ri.permute(0, 5, 1, 2, 3, 4).contiguous().reshape(8, 513, 2)
             frames = IRFFT1024.apply(source_ri).reshape(1, 4, 2, 1024)[..., 1024 - SYNTHESIS_SAMPLES:1024]
             frames = frames * copied.synthesis.spectral_window
@@ -151,7 +180,7 @@ def make_export_copy(model):
             return (deployed, joined[..., -FEATURE_HISTORY:].clone(),
                     next_physical_hidden * PUBLIC_FUSION_SCALE,
                     next_spectral_tail, next_waveform_tail, *extra_states,
-                    next_spec_hidden * PUBLIC_FUSION_SCALE, next_waveform_hidden * PUBLIC_FUSION_SCALE)
+                    next_spec_hidden * PUBLIC_FUSION_SCALE, next_waveform_hidden * PUBLIC_FUSION_SCALE, *filter_state)
 
     with torch.random.fork_rng(devices=[]), torch.device('cpu'):
         copied = copy.deepcopy(model).cpu().eval()

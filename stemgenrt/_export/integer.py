@@ -34,8 +34,8 @@ def build(native, fp32_graph):
 
     fingerprint = state_sha256(native.state_dict())
     graph = copy.deepcopy(fp32_graph)
-    require(len(graph.graph.input) == len(graph.graph.output) == 9,
-            "Require the selected branch-memory model's eight-state interface")
+    require(len(graph.graph.input) == len(graph.graph.output) == 1 + len(native.initial_state(1)),
+            "Require the selected branch-memory model's complete state interface")
     float_sha = hashlib.sha256(graph.SerializeToString()).hexdigest()
     properties = {v.key: v.value for v in graph.metadata_props}
     convolution_proof = convert(graph, ["/conv_encode/Conv", "/basis_to_embed/Conv"])

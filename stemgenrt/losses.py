@@ -496,13 +496,13 @@ def _grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
     parameters = list(model.parameters())
     _require(type(ema) is ParameterEMA and type(step) is int and step == ema.updates + 1,
             "Grouped update must follow the contiguous EMA endpoint")
-    _require(type(optimizer) is torch.optim.Adam and len(parameters) == 40
+    _require(type(optimizer) is torch.optim.Adam and len(parameters) == model.parameter_tensor_count
             and model.training and all(p.requires_grad and p.dtype == torch.float32 for p in parameters)
             and len(optimizer.param_groups) == 1
             and [id(p) for p in optimizer.param_groups[0]["params"]] == [id(p) for p in parameters]
             and set(optimizer.state) == (set() if step == 1 else set(parameters))
             and all(state["step"].item() == step - 1 for state in optimizer.state.values()),
-            "Grouped update requires all 40 parameters at one Adam endpoint")
+            "Grouped update requires all model parameters at one Adam endpoint")
     _require(type(warmup_samples) is int and warmup_samples > 0 and warmup_samples % 128 == 0
             and mixture_cpu.device.type == targets_cpu.device.type == "cpu"
             and type(ordinary_microbatch) is int and 0 < ordinary_microbatch <= 16
@@ -528,7 +528,7 @@ def _grouped_update(model, optimizer, ema, mixture_cpu, targets_cpu, *, step,
     endpoint = {"ema_updates": ema.updates,
                 "raw_model_state_sha256": state_sha256(model.state_dict()),
                 "ema_parameters_sha256": state_sha256(ema.parameters)}
-    _require(ema.updates == step and len(optimizer.state) == 40
+    _require(ema.updates == step and len(optimizer.state) == model.parameter_tensor_count
             and all(state["step"].item() == step for state in optimizer.state.values()),
             "Grouped update advanced Adam or EMA incorrectly")
     return {"step": step, "accumulation_policy": policy(extra_ordinary_primary_sdr_weight=extra,

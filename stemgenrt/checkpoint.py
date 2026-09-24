@@ -1,4 +1,4 @@
-"""Portable checkpoints for the current eight-state model.
+"""Portable checkpoints for the current streaming model.
 
 Training snapshots own raw weights, Adam, FP32 parameter EMA, all RNG streams,
 the absolute data cursor and the complete configuration/data identity. Packed
@@ -21,7 +21,7 @@ import tempfile
 import numpy as np
 import torch
 
-from stemgenrt.model import StemgenRT58, VERSION, LEGACY_VERSION
+from stemgenrt.model import StemgenRT58, VERSION, WINDOW_VERSION, LEGACY_VERSION
 from stemgenrt._checkpoint.codec import CODEC, pack, unpack
 
 SCHEMA = "hs-tasnet-eight-state-training-v1"
@@ -30,17 +30,27 @@ EMA_SCHEMA = "latency58-branch-parameter-ema-v1"
 WINDOW_SCHEMA = "stemgenrt-attention128-training-v1"
 WINDOW_NATIVE_SCHEMA = "stemgenrt-attention128-inference-v1"
 WINDOW_EMA_SCHEMA = "stemgenrt-window-parameter-ema-v1"
+SHARED_SCHEMA = "stemgenrt-shared-mask-training-v1"
+SHARED_NATIVE_SCHEMA = "stemgenrt-shared-mask-inference-v1"
+SHARED_EMA_SCHEMA = "stemgenrt-shared-mask-parameter-ema-v1"
 
 
 def _ema_schema(model):
+    if model.has_past_filter:
+        return SHARED_EMA_SCHEMA
     return WINDOW_EMA_SCHEMA if model.attention_window == 128 else EMA_SCHEMA
 
 
 def _training_schema(model):
+    if model.has_past_filter:
+        return SHARED_SCHEMA
     return WINDOW_SCHEMA if model.attention_window == 128 else SCHEMA
 
 
 def _validate_geometry_config(config, model):
+    _require(type(config.get("past_filter", False)) is bool
+             and config.get("past_filter", False) == model.has_past_filter,
+             "Training configuration past filter differs from the model")
     window = config.get("attention_window", 32)
     _require(type(window) is int and window == model.attention_window,
              "Training configuration attention window differs from the model")
@@ -118,7 +128,7 @@ class ParameterEMA:
         _require(type(model) is StemgenRT58 and model.architecture_metadata == self.architecture,
                  "EMA architecture differs")
         parameters, buffers = dict(model.named_parameters()), dict(model.named_buffers())
-        _require(list(parameters) == list(self.parameters) and len(parameters) == 40
+        _require(list(parameters) == list(self.parameters) and len(parameters) == model.parameter_tensor_count
                  and list(buffers) == list(self.buffers), "EMA tensor inventory differs")
         for stored, current in ((self.parameters, parameters), (self.buffers, buffers)):
             _validate_tensors(stored, current)
@@ -193,7 +203,8 @@ class ParameterEMA:
 def _new_model(architecture):
     # Constructing a loader must not consume the training RNG being restored.
     with torch.random.fork_rng(devices=[]), torch.device("cpu"):
-        model = StemgenRT58(attention_window=architecture["temporal_attention_window_frames"])
+        model = StemgenRT58(attention_window=architecture["temporal_attention_window_frames"],
+                             past_filter=architecture["version"] == VERSION)
     _require(architecture == model.architecture_metadata, "Checkpoint architecture differs")
     return model
 
@@ -207,12 +218,14 @@ def _read(path, digest=None):
 
 
 def _native_payload_model(payload):
-    _require(payload["schema"] in (NATIVE_SCHEMA, WINDOW_NATIVE_SCHEMA)
+    _require(payload["schema"] in (NATIVE_SCHEMA, WINDOW_NATIVE_SCHEMA, SHARED_NATIVE_SCHEMA)
              and type(payload["step"]) is int and payload["step"] > 0,
              "Unsupported native checkpoint schema")
     model = _new_model(payload["architecture"])
+    shared = payload["schema"] == SHARED_NATIVE_SCHEMA
     current = payload["schema"] == WINDOW_NATIVE_SCHEMA
-    _require(model.attention_window == (128 if current else 32), "Native schema and attention window differ")
+    _require(model.has_past_filter == shared and model.attention_window == (128 if current else 32),
+             "Native schema and model geometry differ")
     _require(payload["architecture"] == model.architecture_metadata
              and payload["parameter_names"] == [name for name, _ in model.named_parameters()],
              "Native checkpoint architecture differs")
@@ -220,17 +233,17 @@ def _native_payload_model(payload):
     _require(state_sha256(payload["model"]) == payload["model_state_sha256"], "Native tensor fingerprint differs")
     model.load_state_dict(payload["model"], strict=True)
     provenance = payload["provenance"]
-    prefix = "attention_window" if current else "branch_memory"
+    prefix = "past_filter" if shared else "attention_window" if current else "branch_memory"
     _require(state_sha256(dict(model.named_buffers())) == payload["fixed_buffers_sha256"]
              and model.fixed_residual_share.item() == 1 / 16
-             and provenance[prefix + "_version"] == (VERSION if current else LEGACY_VERSION)
+             and provenance[prefix + "_version"] == (VERSION if shared else WINDOW_VERSION if current else LEGACY_VERSION)
              and provenance[prefix + "_updates"] == payload["step"]
              and provenance["training_updates"] == provenance[prefix + "_parent_updates"] + payload["step"]
              and provenance[prefix + "_training_plan_sha256"] == payload["plan_sha256"]
              and provenance[prefix + "_all_neural_parameters_trained"] is True,
              "Native fixed buffers or training lineage differs")
-    if current:
-        initial = provenance.get("attention_window_initial_model_state_sha256")
+    if current or shared:
+        initial = provenance.get(prefix + "_initial_model_state_sha256")
         _require(isinstance(initial, str) and len(initial) == 64, "Native initial weight fingerprint is missing")
     model.provenance = {**copy.deepcopy(provenance), "checkpoint_weight_role": _native_role(payload)}
     return model.eval().requires_grad_(False)
@@ -262,9 +275,9 @@ def load_native_checkpoint(path, *, sha256, device="cpu"):
 def _validate_optimizer(model, optimizer, step):
     _require(type(optimizer) is torch.optim.Adam, "Only Adam checkpoints are supported")
     parameters = list(model.parameters())
-    _require(len(parameters) == 40 and len(optimizer.param_groups) == 1
+    _require(len(parameters) == model.parameter_tensor_count and len(optimizer.param_groups) == 1
              and [id(p) for p in optimizer.param_groups[0]["params"]] == [id(p) for p in parameters],
-             "Adam must own all 40 parameters in their original order")
+             "Adam must own every model parameter in their original order")
     _require(set(optimizer.state) == (set(parameters) if step else set()), "Adam state inventory differs")
     for parameter in parameters:
         if not step:
@@ -384,7 +397,7 @@ def save_training_checkpoint(path, model, optimizer, ema, *, step, next_sample_i
 
 
 def _training_payload(envelope):
-    _require(isinstance(envelope, dict) and envelope.get("schema") in (SCHEMA, WINDOW_SCHEMA)
+    _require(isinstance(envelope, dict) and envelope.get("schema") in (SCHEMA, WINDOW_SCHEMA, SHARED_SCHEMA)
              and envelope.get("codec") in (None, CODEC), "Unsupported training checkpoint schema or codec")
     _require(sys.byteorder == "little", "Checkpoint decoding requires little-endian tensors")
     payload = unpack(envelope["payload"]) if envelope["codec"] else envelope["payload"]
@@ -445,7 +458,7 @@ def load_training_checkpoint(path, *, sha256=None, config=None, data_identity=No
     model = _training_model(payload).to(target).train().requires_grad_(True)
     model.training_precision = precision
     groups = payload["optimizer"]["param_groups"]
-    _require(len(groups) == 1 and groups[0]["params"] == list(range(40)), "Saved Adam parameter order differs")
+    _require(len(groups) == 1 and groups[0]["params"] == list(range(model.parameter_tensor_count)), "Saved Adam parameter order differs")
     optimizer = torch.optim.Adam(model.parameters(), lr=groups[0]["lr"], foreach=False)
     optimizer.load_state_dict(payload["optimizer"])
     _validate_optimizer(model, optimizer, payload["step"])
@@ -467,7 +480,7 @@ def load_model(path, *, expected_sha256, role=None, device="cpu"):
              "Supply the checkpoint SHA-256")
     _require(role in (None, "raw", "ema"), "Select the raw or EMA inference role")
     envelope = _read(path, expected_sha256)
-    if envelope.get("schema") in (NATIVE_SCHEMA, WINDOW_NATIVE_SCHEMA):
+    if envelope.get("schema") in (NATIVE_SCHEMA, WINDOW_NATIVE_SCHEMA, SHARED_NATIVE_SCHEMA):
         if role is not None:
             _require(_native_role(envelope) ==
                      {"raw": "raw_optimizer_endpoint", "ema": "averaged_inference"}[role],

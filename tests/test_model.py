@@ -12,10 +12,10 @@ import torch
 from stemgenrt.model import StemgenRT58, StreamingState, render_scored_context
 
 
-def new_model(window=128):
+def new_model(window=32, past_filter=True):
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(617)
-        model = StemgenRT58(attention_window=window)
+        model = StemgenRT58(attention_window=window, past_filter=past_filter)
         # Exercise paths that deliberately start with zero output projections.
         with torch.no_grad():
             for parameter in model.parameters():
@@ -38,26 +38,29 @@ assert not any(name == 'research' or name.startswith('research.') for name in sy
     subprocess.run([sys.executable, "-c", script], check=True)
 
 
-@pytest.mark.parametrize("window", (32, 128))
-def test_native_matches_checkpoint_geometry_and_preserves_released_interface(window):
-    model = new_model(window).eval()
+@pytest.mark.parametrize("window,past_filter", ((32, False), (128, False), (32, True)))
+def test_native_matches_checkpoint_geometry_and_preserves_released_interface(window, past_filter):
+    model = new_model(window, past_filter).eval()
     release = json.loads((Path(__file__).resolve().parents[1]
                           / "stemgenrt/streaming_models.json").read_text())["current"]
     state = model.initial_state(1)
-    assert type(state) is StreamingState
-    assert tuple(release["states"]) == state._fields
+    assert (type(state) is StreamingState) == past_filter
+    assert tuple(release["states"]) == state._fields[:8]
     expected = dict(release["states"])
     expected["attention_keys"] = [1, window - 1, 64]
     expected["attention_values"] = [1, window - 1, 128]
+    if past_filter:
+        expected["past_carrier_history"] = [1, 2, 2, 513, 2]
     assert [list(value.shape) for value in state] == list(expected.values())
-    assert len(list(model.parameters())) == 40
-    assert sum(value.numel() for value in model.parameters()) == 32_775_840
+    assert len(list(model.parameters())) == 40 + int(past_filter)
+    assert sum(value.numel() for value in model.parameters()) == 32_775_840 + 16_000 * past_filter
     assert len(list(model.buffers())) == 7
     assert model.sample_rate == 44100
     assert model.hop_samples == model.graph_alignment_samples == model.host_queue_samples == 128
     assert model.algorithmic_latency_samples == 256
     assert model.architecture_metadata["state_names"] == list(state._fields)
     assert model.architecture_metadata["state_family"] == (
+        "stemgenrt-shared-mask-past1-2-v1" if past_filter else
         "latency58-attention-private-branch-gru500-zero-projections-v1" if window == 32
         else "stemgenrt-branch-memory-attention128-v1")
     assert all(value.dtype == torch.float32 for value in state)
@@ -111,12 +114,12 @@ def test_invalid_stream_geometry_is_rejected():
     with pytest.raises(ValueError):
         model.render(torch.zeros(1, 2, 128), tuple(model.initial_state(1)))
     with pytest.raises(ValueError):
-        model.render(torch.zeros(1, 2, 128), new_model(32).initial_state(1))
+        model.render(torch.zeros(1, 2, 128), new_model(128, False).initial_state(1))
 
 
 def test_explicit_window_conversion_preserves_weights_rng_and_latency():
     from stemgenrt.checkpoint import state_sha256
-    parent = new_model(32).eval()
+    parent = new_model(32, False).eval()
     before = state_sha256(parent.state_dict())
     rng = torch.get_rng_state().clone()
     candidate = parent.with_attention_window(128)

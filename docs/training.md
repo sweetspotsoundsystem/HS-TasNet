@@ -1,7 +1,7 @@
 # StemgenRT-5.8 training, evaluation and export
 
 StemgenRT-5.8 has fixed audio geometry: stereo 44.1 kHz input, 1024-sample
-analysis, 256-sample synthesis, a 128-sample hop and eight streaming states.
+analysis, 256-sample synthesis, a 128-sample hop and nine streaming states.
 The native default uses 128 attention frames; historical checkpoints retain
 32 frames. The window is recorded in model, checkpoint and export metadata.
 Install the appropriate PyTorch 2.8.0 build, then `pip install -e '.[training,onnx,test]'`.
@@ -40,7 +40,8 @@ checked for overlap. It is a split guard, not an automatic evaluation schedule.
 
 ## Current recipe
 
-`configs/current-training.json` preserves the selected four-second recipe:
+`configs/current-training.json` and `configs/shared-mask-training.json` select the
+current shared-mask experiment with the following four-second recipe:
 
 | Setting | Value |
 | --- | --- |
@@ -54,7 +55,10 @@ checked for overlap. It is a split guard, not an automatic evaluation schedule.
 | Optimizer | Adam, one update after the ordinary and auxiliary groups |
 | Learning rate | 100-update warmup to 3e-5; cosine to 3e-6 at update 2,000 |
 | Gradient clipping / EMA | 5.0 / 0.995 |
-| Precision | CUDA BF16 with FP32 model parameters and states |
+| Precision | CUDA BF16 backbone; FP32 past-filter projection, parameters and states |
+| Track sampling | Duration-weighted within each corpus |
+| Ordinary primary SDR coefficient | 0.4 |
+| Past-filter geometry | Lags 1 and 2; 32 attention frames; nine states |
 | First absolute sample address | 4,132,000 |
 
 The auxiliary source views retain their original weights and whole-group
@@ -128,14 +132,31 @@ the saved geometry and rejects a changed window. Model loading for inference
 always preserves the checkpoint's window. ONNX export derives cache shapes
 from that model and verifies the corresponding eight-state trajectory.
 
-The older configurations explicitly select 32 frames and preserve their
-previous checkpoint identities. The default `TrainingConfig` selects 128;
-use the supplied attention-128 configuration for the matched scientific
-recipe, including duration sampling and the 0.4 ordinary SDR coefficient.
-Lossless portable recovery uses a separate schema for the new window and
-retains raw weights, all 40 Adam states, EMA, RNG and the absolute data cursor.
-Historical native inference files remain supported; packed research archives
-still require their archived decoder.
+The historical configurations explicitly set `past_filter=false` and preserve
+their previous checkpoint identities. The current model and `TrainingConfig`
+use the past filter and 32 attention frames. Use the supplied current configuration
+for duration sampling and the 0.4 ordinary SDR coefficient. Historical packed
+research archives still require their archived decoder.
+
+### Shared-mask past-frame correction
+
+The current model predicts 16,000 additional FP32 gate parameters and reuses the
+existing frequency masks to combine the two preceding carrier spectra. Its ninth
+state is `[batch, 2, 2, 513, 2]`; reset and detached warmup include that entire state.
+It adds no future callback, FFT transform, or audio queue. The graph-plus-host
+algorithmic delay remains 256 samples. Measured separation gains and physical
+M4 real-time performance are required before adopting a trained checkpoint.
+
+Fresh initialization from a historical 32-frame checkpoint copies all inherited
+tensors and starts the new gate at zero. This preserves the parent's initial
+output while changing the complete model fingerprint. Adam owns all 41 parameter
+tensors, and EMA starts from the complete initialized model, including the new
+gate. Portable training checkpoints use a distinct shared-mask schema and retain
+all raw/Adam/EMA tensors, RNG streams, data cursor and configuration. Exact resume
+rejects a different architecture. Historical checkpoints remain eight-state;
+loading them for inference does not add a gate. FP32 and integer exports preserve
+the new gate in FP32 and verify all nine recurrent states.
+
 
 ### Teacher-assisted experiment
 
@@ -256,7 +277,7 @@ change the deployment graph or its algorithmic latency.
 
 ## Export
 
-Export either checkpoint role to the fixed eight-state interface:
+Export either checkpoint role with its saved eight- or nine-state interface:
 
 ```bash
 python scripts/export_streaming_model.py \

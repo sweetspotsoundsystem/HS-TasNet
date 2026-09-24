@@ -2,8 +2,8 @@
 
 Stereo streaming music separation into **drums, bass, vocals and other**.
 The current model combines spectral and waveform branches, causal attention,
-and recurrent branch memories. It uses **1024-sample analysis, 256-sample
-synthesis, 128-sample hops and eight explicit FP32 states** at 44.1 kHz.
+recurrent branch memories, and a correction using two past carrier frames. It uses **1024-sample analysis, 256-sample
+synthesis, 128-sample hops and nine explicit FP32 states** at 44.1 kHz.
 The **5.8** suffix identifies the latency variant: 128 samples of graph delay
 plus StemgenRT's 128-sample worker queue give 256 samples at 44.1 kHz, rounded
 to **5.8 ms of graph-plus-host algorithmic latency**, excluding audio-device
@@ -51,18 +51,20 @@ scored = render_scored_context(model, audio, warmup_samples=256, carry_state=Tru
 scored.raw.square().mean().backward()
 ```
 
-The native model now defaults to 128 frames of causal attention. This adds
-73,728 bytes of attention state per stream, with the same learned tensors and
-256 samples of graph-plus-host algorithmic latency. Its separation quality and
-physical host performance still need qualification. The released ONNX graph
-keeps its 32-frame history. Checkpoint loading preserves the stored window;
-`StemgenRT58(attention_window=32)` constructs that historical native geometry.
+The native model uses 32 frames of causal attention and a zero-initialized
+past-frame correction that reuses its existing source masks. This adds 16,000
+parameters and 16,416 bytes of streaming state, with the same 256-sample
+algorithmic delay. Separation quality and physical host performance still need
+qualification. The released ONNX graph keeps its existing eight-state interface.
+Checkpoint loading preserves the saved architecture; `StemgenRT58(past_filter=False)`
+and `StemgenRT58(attention_window=128, past_filter=False)` construct the historical
+native geometries.
 
 The maintained package includes deterministic crop/pitch/remix augmentation,
 the whole-group weighted source-view objective, Adam and EMA, lossless complete
 recovery, native/ONNX evaluation and verified export. Read the
 [training and evaluation guide](docs/training.md) for checkpoint requirements,
-portable manifests, the attention-128 experiment and commands. Native FP32 training
+portable manifests, the current shared-mask experiment and commands. Native FP32 training
 weights cannot be reconstructed losslessly from the released integer graph;
 provide an authenticated native checkpoint or explicitly start from scratch.
 
@@ -79,7 +81,7 @@ provide an authenticated native checkpoint or explicitly start from scratch.
 | `stemgenrt.export` | Current fixed-geometry ONNX export |
 | `stemgenrt.streaming` | Released and checksum-pinned custom ONNX inference |
 
-`StemgenRT58` denotes the current eight-state architecture. Earlier configurable
+`StemgenRT58` denotes the current nine-state architecture. Earlier configurable
 and four-state models and their APIs have been removed. `research/` is ignored
 local experimentation and is not required for imports, tests or distributions.
 The complete earlier source

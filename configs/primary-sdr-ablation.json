@@ -22,5 +22,6 @@
   "precision": "bf16",
   "device": "cuda",
   "workers": 2,
-  "extra_ordinary_primary_sdr_weight": 0.2
+  "extra_ordinary_primary_sdr_weight": 0.2,
+  "past_filter": false
 }
