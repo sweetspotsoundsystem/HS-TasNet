@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import copy
+import hashlib
 import json
 import random
 import signal
@@ -343,3 +345,46 @@ def test_threaded_library_call_does_not_install_signal_handlers(harness, monkeyp
     assert not thread.is_alive()
     assert len(outcome) == 1 and isinstance(outcome[0], dict), outcome
     assert outcome[0]["step"] == 1 and len(calls.saves) == 1
+
+
+@pytest.mark.parametrize("alter_reference", [False, True])
+def test_resume_verifies_unsaved_updates_before_journal_or_checkpoint(harness, monkeypatch, tmp_path, alter_reference):
+    config, _, calls, update = harness
+    config = replace(config, checkpoint_every=1)
+    saved = []
+    def capture(model, optimizer, ema, *args, **kwargs):
+        result = update(model, optimizer, ema, *args, **kwargs)
+        if kwargs['step'] == 2:
+            saved.append(copy.deepcopy((model, optimizer, ema)))
+        return result
+    monkeypatch.setattr(trainer, 'grouped_update', capture)
+    original = tmp_path / 'original'
+    trainer.train(config, 'train.json', original)
+    path = original / 'metrics.jsonl'
+    original_bytes = path.read_bytes()
+    if alter_reference:
+        rows = [json.loads(line) for line in original_bytes.splitlines()]
+        rows[2]['weighted_loss'] += 1
+        # The explicitly supplied digest authenticates this wrong reference;
+        # its numerical disagreement must still prevent a checkpoint write.
+        path = tmp_path / 'wrong-reference.jsonl'
+        path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    model, optimizer, ema = saved[0]
+    monkeypatch.setattr(trainer, 'load_training_checkpoint', lambda *a, **k:
+        SimpleNamespace(model=model, optimizer=optimizer, ema=ema, step=2, next_sample_index=352))
+    calls.saves.clear()
+    output = tmp_path / 'resumed'
+    kwargs = dict(resume='previous.pt', sha256='previous-bytes', replay_journal=path, replay_sha256=digest)
+    if alter_reference:
+        with pytest.raises(ValueError, match='scientific update differs at step 3'):
+            trainer.train(config, 'train.json', output, **kwargs)
+        assert not calls.saves and (output / 'metrics.jsonl').read_bytes() == b''
+        assert not (output / 'result.json').exists()
+    else:
+        result = trainer.train(config, 'train.json', output, **kwargs)
+        assert result['replay_verification']['verified_steps'] == [3, 4, 5, 6]
+        assert [item['step'] for item in calls.saves] == [3, 4, 5, 6]
+        assert calls.saves[-1]['metadata']['replay_verification'] == result['replay_verification']
+        assert result['schedule_steps'] == 6 and result['resumed_from_step'] == 2
+    assert (original / 'metrics.jsonl').read_bytes() == original_bytes

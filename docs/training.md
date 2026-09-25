@@ -257,6 +257,17 @@ inside the checkpoint; later unsaved updates must be repeated. Keep the
 original schedule horizon and preserve the previous run directory. A missing
 `result.json` does not establish that training reached its requested endpoint.
 
+When the previous journal contains completed updates beyond the checkpoint,
+add `--replay-journal runs/first/metrics.jsonl --replay-sha256 EXPECTED_JOURNAL_SHA256`
+to the resume command. The trainer compares every repeated update, including
+losses, gradients, input hashes and weight hashes, before writing that row or
+saving its checkpoint. Only elapsed-time and memory measurements are excluded.
+A difference stops the continuation. The journal must cover a consecutive
+sequence through the unsaved updates; an unterminated final line is ignored
+as an uncommitted write, while its bytes remain part of the required digest.
+Verification details are recorded in checkpoint metadata and `result.json`.
+The original journal and checkpoint stay in their previous run directory.
+
 ### Changing the training dataset
 
 Dataset expansion starts a new experiment. Build a new manifest, exclude the

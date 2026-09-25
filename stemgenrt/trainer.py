@@ -142,7 +142,8 @@ def _json(path, value):
 
 
 def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None,
-          role="ema", stop_after=None, validation_manifest=None):
+          role="ema", stop_after=None, validation_manifest=None,
+          replay_journal=None, replay_sha256=None):
     """Start or exactly resume a finite run into a new output directory.
 
     Initializing from a checkpoint starts fresh Adam/EMA; --resume restores all
@@ -154,6 +155,8 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
         raise ValueError("Choose one checkpoint initialization or exact resume")
     if (checkpoint is not None or resume is not None) and sha256 is None:
         raise ValueError("Supply the checkpoint's expected SHA-256")
+    if (replay_journal is None) != (replay_sha256 is None) or (replay_journal is not None and resume is None):
+        raise ValueError("Replay verification requires --resume, --replay-journal and --replay-sha256")
     if role not in ("raw", "ema"):
         raise ValueError("Checkpoint role must be raw or ema")
     stop = config.steps if stop_after is None else stop_after
@@ -225,6 +228,11 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
     model.train().requires_grad_(True)
     model.training_precision = config.precision
     initial_step = step
+    replay = None
+    if replay_journal is not None:
+        from .recovery import ReplayVerifier
+        replay = ReplayVerifier(replay_journal, sha256=replay_sha256,
+                                resume_step=step, schedule_steps=config.steps)
     fixed = {name: tensor.detach().clone() for name, tensor in model.named_buffers()}
     final_index = config.data_start + stop * config.batch_size
     dataset = make_dataset(corpus, config_dict, final_index)
@@ -252,10 +260,13 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
     began = time.monotonic()
     saved = None
     def save():
+        if replay is not None:
+            replay.verify_source()
         return save_training_checkpoint(output / "checkpoint.pt", model, optimizer, ema,
             step=step, next_sample_index=config.data_start + step * config.batch_size,
             config=config_dict, data_identity=data_identity,
-            metadata={"torch_version": str(torch.__version__), "device_type": device.type})
+            metadata={"torch_version": str(torch.__version__), "device_type": device.type,
+                      **({"replay_verification": replay.report()} if replay is not None else {})})
     try:
         with (output / "metrics.jsonl").open("x", buffering=1) as journal:
             for mixture, targets in loader:
@@ -289,6 +300,8 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
                     "next_sample_index": first + config.batch_size, "pitch_tempo_recipes": batch_recipes(config_dict, first),
                     "before_remix_audio_sha256": before, "after_remix_audio_sha256": after,
                     "elapsed_seconds": time.monotonic() - began}
+                if replay is not None:
+                    replay.compare(row)
                 journal.write(json.dumps(row, allow_nan=False) + "\n")
                 journal.flush()
                 os.fsync(journal.fileno())
@@ -305,6 +318,9 @@ def train(config, manifest, output, *, checkpoint=None, resume=None, sha256=None
             "elapsed_seconds": time.monotonic() - began}
         if not requested_stop and step != stop:
             raise RuntimeError("Input data ended before the requested training endpoint")
+        if replay is not None:
+            replay.verify_source()
+            result["replay_verification"] = replay.report()
         _json(output / "result.json", result)
         return result
     finally:
@@ -325,11 +341,14 @@ def main():
     parser.add_argument("--sha256", help="Required expected digest for --checkpoint or --resume")
     parser.add_argument("--role", choices=("raw", "ema"), default="ema", help="Weight role for fresh-Adam initialization")
     parser.add_argument("--stop-after", type=int)
+    parser.add_argument("--replay-journal", type=Path, help="Verify repeated updates against a previous run's journal")
+    parser.add_argument("--replay-sha256", help="Expected digest of the complete original journal file")
     args = parser.parse_args()
     torch.set_num_threads(1)
     result = train(TrainingConfig(**json.loads(args.config.read_text())), args.manifest, args.output,
         checkpoint=args.checkpoint, resume=args.resume, sha256=args.sha256, role=args.role,
-        stop_after=args.stop_after, validation_manifest=args.validation_manifest)
+        stop_after=args.stop_after, validation_manifest=args.validation_manifest,
+        replay_journal=args.replay_journal, replay_sha256=args.replay_sha256)
     print(json.dumps(result, allow_nan=False))
 
 
