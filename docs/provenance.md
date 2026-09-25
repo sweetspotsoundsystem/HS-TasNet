@@ -18,11 +18,13 @@ archive tag is required.
 
 ## Maintained implementation
 
-The current eight-state architecture was extracted without changing parameter
+The original eight-state architecture was extracted without changing parameter
 names, buffer names, state shapes, checkpoint schema identifiers or neural and
 synthesis arithmetic. Its full implementation now lives in the installed
-`stemgenrt` package. The historical class inheritance chain is replaced by one
-current model and small DSP helpers.
+`stemgenrt` package. The maintained nine-state model adds a learned filter over
+two past spectral frames. Historical eight-state checkpoints retain their
+original state interface. The historical class inheritance chain is replaced
+by one current model and small DSP helpers.
 
 The crop/pitch/remix recipes and weighted ordinary/auxiliary objectives retain
 their scientific definitions. New-run orchestration uses portable manifests
@@ -39,8 +41,9 @@ Keep a running historical job on its original source checkout.
 ## Removed APIs and local research
 
 The original configurable model, trainer, dataset class and ONNX exporter,
-and the earlier four-state implementation are removed. `StemgenRT58` refers
-only to the current eight-state model.
+and the earlier four-state implementation are removed. `StemgenRT58` defaults
+to the current nine-state model and loads supported historical eight-state
+checkpoints.
 Four-state imports, graph downloads and legacy training configurations are no
 longer supported. Existing users who require them should pin the preserved
 pre-cleanup commit.

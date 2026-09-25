@@ -5,7 +5,7 @@
 This working manuscript retains its 11 September 2026 v0.1 results, with a
 naming revision dated 20 September. It describes the **historical four-state
 C204 predecessor**. Its architecture and measurements do not evaluate the
-current eight-state `StemgenRT58` implementation in `stemgenrt`.
+current nine-state `StemgenRT58` implementation in `stemgenrt`.
 
 The 5.8 suffix means 256 samples of graph-plus-host algorithmic delay at
 44.1 kHz, rounded to 5.8 ms; model revisions are separate. The underlying

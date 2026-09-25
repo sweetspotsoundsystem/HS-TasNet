@@ -4,9 +4,9 @@
 
 **Authors and affiliations:** to be supplied.
 
-**Historical scope · Naming revision: 20 September 2026.** This 11 September v0.1 draft describes the four-state C204 predecessor. The current maintained model has eight states; the architecture and results reported here do not evaluate that model.
+**Historical scope · Naming revision: 20 September 2026.** This 11 September v0.1 draft describes the four-state C204 predecessor. The current maintained model has nine states; the architecture and results reported here do not evaluate that model.
 
-**StemgenRT-5.8** names the latency variant: 256 samples of graph-plus-host algorithmic delay at 44.1 kHz, or approximately 5.805 ms, rounded to 5.8 ms. It excludes audio-device latency and does not measure execution time. A separate revision identifies models that share this latency budget. This draft describes the historical HS-TasNet-derived architecture pinned in reference [7]. The current eight-state implementation is `StemgenRT58` in the `stemgenrt` package; StemgenRT is its host plugin.
+**StemgenRT-5.8** names the latency variant: 256 samples of graph-plus-host algorithmic delay at 44.1 kHz, or approximately 5.805 ms, rounded to 5.8 ms. It excludes audio-device latency and does not measure execution time. A separate revision identifies models that share this latency budget. This draft describes the historical HS-TasNet-derived architecture pinned in reference [7]. The current nine-state implementation is `StemgenRT58` in the `stemgenrt` package; StemgenRT is its host plugin.
 
 ## Abstract
 
