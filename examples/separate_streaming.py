@@ -5,7 +5,7 @@ from pathlib import Path
 
 import soundfile as sf
 
-from hs_tasnet.streaming import MODEL_SHA256, SOURCE_ORDER, StreamingSeparator
+from stemgenrt.streaming import MODEL_SHA256, SOURCE_ORDER, StreamingSeparator
 
 
 def main():

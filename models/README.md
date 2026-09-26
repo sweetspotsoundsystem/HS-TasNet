@@ -1,62 +1,45 @@
-# Stereo streaming model
+# StemgenRT-5.8 model interface
 
-This trained HS-TasNet variant separates a stereo music mixture into Drums,
-Bass, Vocals and Other. Spectral and waveform branches share recurrent context.
-The asymmetric analysis window spans 1024 samples; synthesis uses 256 samples
-with a 128-sample hop. Four explicit states retain context between calls.
+The released `hop128.onnx` separates 44.1 kHz stereo audio into drums, bass,
+vocals and other. Analysis is 1024 samples, synthesis 256 samples, and each
+input/output hop 128 samples. Causal attention and branch GRUs carry eight
+explicit FP32 states.
 
-`hop128.onnx` is a single float32 ONNX file, with no external weight file.
-Use ONNX Runtime **1.26.0 CPU**. Download the shared StemgenRT model with
-`python scripts/download_streaming_model.py`; the script pins an immutable
-source revision and verifies size and SHA-256 before making the file available.
-SHA-256: `b8574ac2e67bcd1df533e3fc7464c0659d4bfa6744cfbb4389c0967271594fe3`.
-Size: **111,344,465 bytes**.
+See the [model overview](../README.md) for the latency suffix definition.
 
-## Streaming interface
+Download with `python scripts/download_streaming_model.py`. The file's pinned
+identity and immutable download URL are in `stemgenrt/streaming_models.json`.
+The StemgenRT v0.6.2 graph is 37,529,132 bytes, SHA-256
+`77164d6a581fafb2a31f53fd8ffde44c07cf618472952a4cdba14e68dda3b8b9`.
+Use ONNX Runtime 1.26.0 CPU; the public wrapper sets one thread and disables
+KleidiAI to match the release. Weights are not bundled with Python packages.
+When upgrading, move an older `models/hop128.onnx` aside before downloading;
+the downloader preserves existing files and refuses to overwrite a different model.
 
-All tensors are float32. Audio is stereo at exactly 44.1 kHz, without per-hop
-normalization, clipping or resampling. Output source order is **Drums, Bass,
-Vocals, Other**. The graph calculates Other as the delayed mixture minus the
-first three stems, so the four outputs reconstruct that mixture within floating-
-point rounding. This does not imply exact recovery of the original recordings.
+| Input | Shape | Output |
+| --- | --- | --- |
+| `audio_chunk` | `[1,2,128]` | `separated_chunk`: `[1,4,2,128]` |
+| `audio_history` | `[1,2,896]` | `next_audio_history` |
+| `fusion_hidden` | `[2,1,1000]` | `next_fusion_hidden` |
+| `spectral_numerator_tail` | `[1,4,2,128]` | `next_spectral_numerator_tail` |
+| `waveform_tail` | `[1,4,2,128]` | `next_waveform_tail` |
+| `attention_keys` | `[1,31,64]` | `next_attention_keys` |
+| `attention_values` | `[1,31,128]` | `next_attention_values` |
+| `spec_memory_hidden` | `[1,1,500]` | `next_spec_memory_hidden` |
+| `waveform_memory_hidden` | `[1,1,500]` | `next_waveform_memory_hidden` |
 
-| Input | Shape | Output | Shape |
-| --- | --- | --- | --- |
-| `audio_chunk` | `[1,2,128]` | `separated_chunk` | `[1,4,2,128]` |
-| `audio_history` | `[1,2,896]` | `next_audio_history` | `[1,2,896]` |
-| `fusion_hidden` | `[2,1,1000]` | `next_fusion_hidden` | `[2,1,1000]` |
-| `spectral_numerator_tail` | `[1,4,2,128]` | `next_spectral_numerator_tail` | `[1,4,2,128]` |
-| `waveform_tail` | `[1,4,2,128]` | `next_waveform_tail` | `[1,4,2,128]` |
+Each next-state shape equals its input-state shape. Initialize all states to
+zero. Each output corresponds to the previous input hop; discard initial
+pre-roll and provide one zero hop to flush the last input. Pad partial input
+hops and trim their output to the original sample count. `StreamingSeparator`
+handles this lifecycle and resets on invalid input, seek or a new clip.
 
-1. Initialize all four state tensors to zero.
-2. Submit consecutive 128-sample hops and carry every returned state unchanged.
-   Ignore the first output after reset; call N emits input N-1.
-3. Pad a partial final input hop with zeros, then submit exactly one zero hop
-   to recover the pending output. Trim the concatenated output to the real length.
-4. Reset all state after a seek, a gap, invalid input, or a new stream.
+The graph forms Other from the delayed mixture minus the first three stems,
+so stems reconstruct the mixture within floating-point rounding. This is a
+mixture-consistency property, not proof of perfect source recovery. Input
+levels are not normalized or clipped.
 
-The `StreamingSeparator` Python API handles state and alignment. `process_chunk`
-returns `None` for the initial hop, `flush` returns the last pending output and
-resets the stream, and `separate` renders a whole clip with padding removed.
-Use one instance per stream; do not call an instance concurrently.
-
-## Validation and limits
-
-The model scores **4.07 dB mean full-band SDR** on a 14-track development panel,
-up from 3.85 dB for the previous model. Additional intervals on those same tracks
-support the improvement; controlled source inputs show less vocal/instrument
-spill. These are development measurements, with remaining variation by source
-and passage, including quiet instruments.
-
-Tests compare all four outputs against independent CPU float32 PyTorch results
-for lengths 1, 127, 128, 129, 255, 256, 257 and 16521. They cover reset replay,
-one-hop alignment, final-sample recovery and mixture reconstruction. The
-[fixture metadata](../tests/fixtures/hop128-pytorch.json) records its format,
-model identity and reference implementation. Run `pytest tests/test_streaming.py`.
-
-The 128-sample graph delay describes alignment. CPU throughput and any playback
-queue add separate constraints. Use StemgenRT for host scheduling, compensation,
-confidence fades and deadline fallback; these are outside the Python wrapper.
-
-Based on the [HS-TasNet architecture](https://arxiv.org/abs/2402.17701) and
-Phil Wang's implementation. See the repository license and citations.
+Custom current-model exports require an explicit `expected_sha256` and the
+same eight-state contract. Four-state graphs and window/hop overrides are no
+longer supported. Native FP32 checkpoints and licensed corpus audio must be
+supplied separately; the integer release is not a reversible training archive.
