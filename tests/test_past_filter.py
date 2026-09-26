@@ -49,7 +49,7 @@ def test_parent_conversion_preserves_weights_rng_and_zero_head_output():
         model.with_attention_window(128)
 
 
-@pytest.mark.parametrize('configuration', [dict(attention_window=128), dict(past_filter=1)])
+@pytest.mark.parametrize('configuration', [dict(attention_window=128, past_filter=True), dict(past_filter=1)])
 def test_unqualified_past_filter_geometry_is_rejected(configuration):
     with pytest.raises(ValueError):
         StemgenRT58(**configuration)

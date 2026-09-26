@@ -25,5 +25,6 @@
   "extra_ordinary_primary_sdr_weight": 0.2,
   "teacher_coefficient": 1.0,
   "teacher_checkpoint": "models/7d865c68-3d5dd56b.th",
-  "past_filter": false
+  "past_filter": false,
+  "track_sampling": "uniform"
 }

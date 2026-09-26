@@ -51,7 +51,9 @@ def endpoint(step=0):
 @pytest.fixture
 def harness(monkeypatch):
     config = trainer.TrainingConfig(steps=6, warmup=2, workers=0,
-                                    device="cpu", precision="fp32", data_start=320)
+                                    device="cpu", precision="fp32", data_start=320,
+                                    past_filter=True, track_sampling="uniform",
+                                    extra_ordinary_primary_sdr_weight=0.)
     corpus = SimpleNamespace(sha256="training-bytes", tracks=("training-track",),
                              root_weights={"recordings": 1.}, split="train")
     calls = SimpleNamespace(indices=[], updates=[], saves=[], datasets=[], loads=[])
@@ -110,6 +112,26 @@ def test_learning_rate_uses_original_completed_update_schedule():
     assert trainer.learning_rate(config.warmup + 1, config) < config.lr
     with pytest.raises(ValueError):
         trainer.learning_rate(config.steps, config)
+
+
+def test_current_config_selects_frozen_teacher_baseline():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    selected = json.loads((root / 'configs/current-training.json').read_text())
+    assert selected == json.loads((root / 'configs/teacher-training.json').read_text())
+    config = trainer.TrainingConfig(**selected).validate()
+    assert config.steps == 2000 and config.data_start == 4132000
+    assert config.seed == 20261102 and config.data_seed == 60
+    assert config.precision == 'bf16' and config.microbatch_size == 16 and config.auxiliary_microbatch_size == 2
+    assert config.attention_window == 32 and not config.past_filter
+    assert config.track_sampling == 'uniform' and config.extra_ordinary_primary_sdr_weight == .2
+    assert config.teacher_coefficient == 1.0 and config.teacher_checkpoint == "models/7d865c68-3d5dd56b.th"
+    assert config.checkpoint_every == 50 and config.ema_decay == .995
+    defaults = trainer.TrainingConfig().validate()
+    assert defaults.precision == config.precision and defaults.past_filter == config.past_filter
+    assert defaults.microbatch_size == 16 and defaults.auxiliary_microbatch_size == 2
+    assert defaults.track_sampling == config.track_sampling
+    assert defaults.extra_ordinary_primary_sdr_weight == config.extra_ordinary_primary_sdr_weight
 
 
 @pytest.mark.parametrize("changes", [

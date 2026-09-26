@@ -1,6 +1,6 @@
 # Maintained source and research
 
-The supported implementation is the nine-state streaming model in
+The supported implementation is the eight-state streaming model in
 `stemgenrt/model.py`. Keep its data pipeline, weighted objective, Adam/EMA
 checkpointing, evaluation and deployment transformations in the same review.
 The model has fixed 1024-sample analysis, 256-sample synthesis and 128-sample

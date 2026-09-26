@@ -1,4 +1,4 @@
-"""The current nine-state StemgenRT-5.8 model and detached training context.
+"""The current eight-state StemgenRT-5.8 model and detached training context.
 
 Constructing a model initializes untrained parameters. Checkpoints and ONNX
 inference are separate APIs; no weights are downloaded or loaded on import.
@@ -102,7 +102,7 @@ _ARCHITECTURE = {'version': 'latency58-attention-private-branch-gru500-zero-proj
  'branch_memory_added_state_elements_per_stream': 1000}
 
 
-class _LegacyStreamingState(NamedTuple):
+class StreamingState(NamedTuple):
     audio_history: torch.Tensor
     fusion_hidden: torch.Tensor
     spectral_numerator_tail: torch.Tensor
@@ -115,7 +115,7 @@ class _LegacyStreamingState(NamedTuple):
     def detached(self):
         return type(self)(*(value.detach() for value in self))
 
-class StreamingState(NamedTuple):
+class _PastFilterStreamingState(NamedTuple):
     audio_history: torch.Tensor
     fusion_hidden: torch.Tensor
     spectral_numerator_tail: torch.Tensor
@@ -136,7 +136,7 @@ class ModelOutput:
     spectral: Tensor
     waveform: Tensor
     delayed_mixture: Tensor
-    state: StreamingState
+    state: StreamingState | _PastFilterStreamingState
     native_raw: Tensor
 
 
@@ -154,14 +154,14 @@ class ContextOutput:
 
 
 class StemgenRT58(nn.Module):
-    """Four-stem stereo separator with 128-sample hops and nine FP32 states.
+    """Four-stem stereo separator with 128-sample hops and eight FP32 states.
 
     ``render`` accepts a whole number of hops, while ``forward_chunk`` accepts
     exactly one. Returned audio has 128 samples of graph alignment. The host's
     separate 128-sample queue gives 256 samples of total algorithmic latency.
-    The current model uses 32 attention frames and two past carrier frames.
-    ``past_filter=False`` preserves historical eight-state checkpoints, with
-    either 32 or 128 attention frames. All modes use only received frames.
+    The current model uses 32 attention frames. ``past_filter=True`` retains
+    the nine-state shared-mask experiment; ``attention_window=128`` selects
+    the longer attention experiment. All modes use only received frames.
     CUDA training can set ``training_precision = "bf16"``; public states,
     synthesis, and parameters remain FP32.
     """
@@ -181,7 +181,7 @@ class StemgenRT58(nn.Module):
     flush_required = True
     flush_hops = 1
 
-    def __init__(self, *, attention_window=32, past_filter=True):
+    def __init__(self, *, attention_window=32, past_filter=False):
         super().__init__()
         require(type(attention_window) is int and attention_window in (32, 128),
                 "Use the historical 32-frame or current 128-frame attention window")
@@ -234,7 +234,7 @@ class StemgenRT58(nn.Module):
         if self.has_past_filter:
             parameters = sum(p.numel() for p in self.past_filter.parameters())
             return {**architecture, "version": VERSION, "state_family": VERSION,
-                    "state_names": list(StreamingState._fields), "past_filter_lags": [1, 2],
+                    "state_names": list(_PastFilterStreamingState._fields), "past_filter_lags": [1, 2],
                     "past_filter_coefficient_source": "existing_source_masks",
                     "past_filter_parameters": parameters,
                     "past_filter_precision": "FP32 including learned projections",
@@ -260,10 +260,10 @@ class StemgenRT58(nn.Module):
 
     @property
     def state_type(self):
-        return StreamingState if self.has_past_filter else _LegacyStreamingState
+        return _PastFilterStreamingState if self.has_past_filter else StreamingState
 
     def with_past_filter(self):
-        """Initialize the current model from a historical 32-frame CPU parent.
+        """Initialize the shared-mask experiment from a 32-frame CPU parent.
 
         Inherited tensor bytes and RNG streams are preserved. The new gate is
         zero, so this conversion starts a new experiment with the same output.
@@ -276,7 +276,7 @@ class StemgenRT58(nn.Module):
         before = state_sha256(inherited)
         with torch.random.fork_rng(devices=[]), torch.device("cpu"):
             torch.manual_seed(20260923)
-            result = StemgenRT58()
+            result = StemgenRT58(past_filter=True)
         result.load_state_dict({**inherited, "past_filter.gate.weight": result.past_filter.gate.weight}, strict=True)
         require(state_sha256({k: v for k, v in result.state_dict().items() if k != "past_filter.gate.weight"}) == before
                 and state_sha256(self.state_dict()) == before, "Past-filter initialization changed parent weights")
@@ -336,7 +336,7 @@ class StemgenRT58(nn.Module):
     def _residual_source_softmax(logits: Tensor) -> Tensor:
         return logits.add(torch.softmax(logits, dim=-1), alpha=float(SOURCES))
 
-    def render(self, audio: Tensor, state: StreamingState | None = None) -> ModelOutput:
+    def render(self, audio: Tensor, state: StreamingState | _PastFilterStreamingState | None = None) -> ModelOutput:
         state = self._validate(audio, state)
         with torch.autocast(audio.device.type, enabled=False):
             return self._render_fp32(audio, state)
@@ -477,11 +477,11 @@ class StemgenRT58(nn.Module):
         return ModelOutput(raw, deployed, spectral * scales, waveform_audio * scales,
                                    mixture, next_state, native_raw)
 
-    def forward(self, audio: Tensor, state: StreamingState | None = None, *, return_raw=False):
+    def forward(self, audio: Tensor, state: StreamingState | _PastFilterStreamingState | None = None, *, return_raw=False):
         output = self.render(audio, state)
         return (output.raw if return_raw else output.deployed), output.state
 
-    def forward_chunk(self, audio: Tensor, state: StreamingState | None = None, *, return_raw=False):
+    def forward_chunk(self, audio: Tensor, state: StreamingState | _PastFilterStreamingState | None = None, *, return_raw=False):
         require(audio.ndim == 3 and audio.shape[-1] == HOP, "Literal input requires exactly 128 samples")
         return self.forward(audio, state, return_raw=return_raw)
 

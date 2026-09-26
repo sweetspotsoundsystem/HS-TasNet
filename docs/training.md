@@ -1,9 +1,10 @@
 # StemgenRT-5.8 training, evaluation and export
 
 StemgenRT-5.8 has fixed audio geometry: stereo 44.1 kHz input, 1024-sample
-analysis, 256-sample synthesis, a 128-sample hop and nine streaming states.
-The native default uses 128 attention frames; historical checkpoints retain
-32 frames. The window is recorded in model, checkpoint and export metadata.
+analysis, 256-sample synthesis, a 128-sample hop and eight streaming states.
+The native default uses 32 attention frames. The 128-frame and nine-state
+shared-mask experiments remain explicitly selectable. Their geometry is recorded
+in model, checkpoint and export metadata.
 Install the appropriate PyTorch 2.8.0 build, then `pip install -e '.[training,onnx,test]'`.
 The export dependencies are pinned because integer lowering verifies a specific
 ONNX node inventory.
@@ -40,8 +41,8 @@ checked for overlap. It is a split guard, not an automatic evaluation schedule.
 
 ## Current recipe
 
-`configs/current-training.json` and `configs/shared-mask-training.json` select the
-current shared-mask experiment with the following four-second recipe:
+`configs/current-training.json` and `configs/teacher-training.json` retain the
+recipe that produced the frozen teacher-assisted EMA research baseline:
 
 | Setting | Value |
 | --- | --- |
@@ -55,11 +56,27 @@ current shared-mask experiment with the following four-second recipe:
 | Optimizer | Adam, one update after the ordinary and auxiliary groups |
 | Learning rate | 100-update warmup to 3e-5; cosine to 3e-6 at update 2,000 |
 | Gradient clipping / EMA | 5.0 / 0.995 |
-| Precision | CUDA BF16 backbone; FP32 past-filter projection, parameters and states |
-| Track sampling | Duration-weighted within each corpus |
+| Precision | BF16 learned operations; FP32 synthesis, parameters and public states |
+| Track sampling | Uniform within each corpus |
 | Ordinary primary SDR coefficient | 0.4 |
-| Past-filter geometry | Lags 1 and 2; 32 attention frames; nine states |
+| Teacher coefficient | 1.0, ordinary ground-truth-active windows only |
+| Streaming geometry | 32 attention frames; eight states; no past filter |
 | First absolute sample address | 4,132,000 |
+
+This recipe starts from the authenticated parent EMA with fresh Adam and EMA
+state. It records the 2,000-update schedule and original data address; reproducing
+the sequence also requires the same ordered 301-track inventory and parent.
+Starting it from the best endpoint would be a new continuation, not reproduction.
+The generic `TrainingConfig` starts at address zero with teacher supervision
+disabled; these two explicit configs enable the pinned teacher described below.
+Portable recovery checkpoints are saved every 50 updates, retaining optimizer,
+EMA, RNG and the next absolute sample address.
+
+The selected source checkpoint scores **4.564402 dB** on the unchanged development
+panel. This does not establish a fresh held-out result or the exported graph's
+quality and host performance. The research baseline and shipped v0.6.1 product
+baseline are frozen. The FP32/BF16 diagnostic, 128-frame attention and shared-mask
+experiments are closed; their retained code does not select a new training run.
 
 The auxiliary source views retain their original weights and whole-group
 denominators. Source remixing is addressed in groups of 16. Warmup initializes
@@ -132,20 +149,20 @@ the saved geometry and rejects a changed window. Model loading for inference
 always preserves the checkpoint's window. ONNX export derives cache shapes
 from that model and verifies the corresponding eight-state trajectory.
 
-The historical configurations explicitly set `past_filter=false` and preserve
-their previous checkpoint identities. The current model and `TrainingConfig`
-use the past filter and 32 attention frames. Use the supplied current configuration
-for duration sampling and the 0.4 ordinary SDR coefficient. Historical packed
-research archives still require their archived decoder.
+The configurations explicitly record their past-filter geometry and preserve
+their checkpoint identities. The current model and `TrainingConfig` use eight
+states and 32 attention frames. The trainer defaults to BF16, uniform sampling,
+ordinary/auxiliary microbatches of 16/2 and the 0.4 ordinary SDR coefficient. Historical
+packed research archives still require their archived decoder.
 
 ### Shared-mask past-frame correction
 
-The current model predicts 16,000 additional FP32 gate parameters and reuses the
+`configs/shared-mask-training.json` retains the earlier nine-state experiment.
+That model predicts 16,000 additional FP32 gate parameters and reuses the
 existing frequency masks to combine the two preceding carrier spectra. Its ninth
 state is `[batch, 2, 2, 513, 2]`; reset and detached warmup include that entire state.
 It adds no future callback, FFT transform, or audio queue. The graph-plus-host
-algorithmic delay remains 256 samples. Measured separation gains and physical
-M4 real-time performance are required before adopting a trained checkpoint.
+algorithmic delay remains 256 samples. This experiment is closed and its checkpoint was not selected for deployment.
 
 Fresh initialization from a historical 32-frame checkpoint copies all inherited
 tensors and starts the new gate at zero. This preserves the parent's initial
@@ -158,13 +175,13 @@ loading them for inference does not add a gate. FP32 and integer exports preserv
 the new gate in FP32 and verify all nine recurrent states.
 
 
-### Teacher-assisted experiment
+### Teacher-assisted baseline
 
 `configs/teacher-training.json` adds `teacher_coefficient=1.0` to the primary
 SDR ablation. It retains the ordinary ground-truth loss and auxiliary source
-views. Separation improvement from this experiment has not been established.
-Compare saved endpoints on the same held-out material, including instrumental
-leakage, isolated and quiet vocals, and the Other stem.
+views. Its saved EMA is the frozen 4.564402 dB research baseline.
+Review deployment quality, instrumental leakage, isolated and quiet vocals,
+and Other separately before accepting a plugin build.
 
 Install the optional training dependency and obtain the pinned teacher:
 

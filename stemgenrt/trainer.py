@@ -29,7 +29,7 @@ from .model import StemgenRT58
 @dataclass(frozen=True)
 class TrainingConfig:
     attention_window: int = 32
-    past_filter: bool = True
+    past_filter: bool = False
     steps: int = 2000
     batch_size: int = 16
     microbatch_size: int = 16
@@ -50,7 +50,7 @@ class TrainingConfig:
     precision: str = "bf16"
     device: str = "cuda"
     workers: int = 2
-    extra_ordinary_primary_sdr_weight: float = 0.
+    extra_ordinary_primary_sdr_weight: float = .2
     teacher_coefficient: float = 0.
     teacher_checkpoint: str | None = None
 

@@ -22,7 +22,9 @@
   "precision": "bf16",
   "device": "cuda",
   "workers": 2,
-  "past_filter": true,
-  "track_sampling": "duration",
-  "extra_ordinary_primary_sdr_weight": 0.2
+  "extra_ordinary_primary_sdr_weight": 0.2,
+  "teacher_coefficient": 1.0,
+  "teacher_checkpoint": "models/7d865c68-3d5dd56b.th",
+  "past_filter": false,
+  "track_sampling": "uniform"
 }

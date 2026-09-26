@@ -2,8 +2,8 @@
 
 Stereo streaming music separation into **drums, bass, vocals and other**.
 The current model combines spectral and waveform branches, causal attention,
-recurrent branch memories, and a correction using two past carrier frames. It uses **1024-sample analysis, 256-sample
-synthesis, 128-sample hops and nine explicit FP32 states** at 44.1 kHz.
+and recurrent branch memories. It uses **1024-sample analysis, 256-sample
+synthesis, 128-sample hops and eight explicit FP32 states** at 44.1 kHz.
 The **5.8** suffix identifies the latency variant: 128 samples of graph delay
 plus StemgenRT's 128-sample worker queue give 256 samples at 44.1 kHz, rounded
 to **5.8 ms of graph-plus-host algorithmic latency**, excluding audio-device
@@ -51,22 +51,27 @@ scored = render_scored_context(model, audio, warmup_samples=256, carry_state=Tru
 scored.raw.square().mean().backward()
 ```
 
-The native model uses 32 frames of causal attention and a zero-initialized
-past-frame correction that reuses its existing source masks. This adds 16,000
-parameters and 16,416 bytes of streaming state, with the same 256-sample
-algorithmic delay. Separation quality and physical host performance still need
-qualification. The released ONNX graph keeps its existing eight-state interface.
-Checkpoint loading preserves the saved architecture; `StemgenRT58(past_filter=False)`
-and `StemgenRT58(attention_window=128, past_filter=False)` construct the historical
-native geometries.
+The native default uses 32 frames of causal attention and eight streaming states.
+The frozen research baseline is the teacher-assisted EMA checkpoint at **4.564402
+dB full-band SDR** on the fixed 14-track, 28-excerpt development panel. Its
+training recipe is retained in `configs/current-training.json`: BF16 learned
+operations, uniform track sampling, ordinary/auxiliary microbatches of 16/2,
+and teacher coefficient 1.0. The teacher is absent from inference.
+
+Checkpoint loading preserves the saved architecture. The 128-frame attention
+and nine-state shared-mask variants remain available for loading historical
+experiments; those experiment lines and the FP32/BF16 diagnostic are closed.
+The released ONNX download remains pinned to the shipped v0.6.1 product
+baseline. Source checkpoint quality and deployment graph quality are measured
+separately; see [provenance](docs/provenance.md).
 
 The maintained package includes deterministic crop/pitch/remix augmentation,
 the whole-group weighted source-view objective, Adam and EMA, lossless complete
 recovery, native/ONNX evaluation and verified export. Read the
 [training and evaluation guide](docs/training.md) for checkpoint requirements,
-portable manifests, the current shared-mask experiment and commands. Native FP32 training
-weights cannot be reconstructed losslessly from the released integer graph;
-provide an authenticated native checkpoint or explicitly start from scratch.
+portable manifests and commands. Native FP32 weights cannot be reconstructed
+losslessly from the released integer graph; provide an authenticated native
+checkpoint or explicitly start from scratch.
 
 ## Supported source
 
@@ -81,7 +86,7 @@ provide an authenticated native checkpoint or explicitly start from scratch.
 | `stemgenrt.export` | Current fixed-geometry ONNX export |
 | `stemgenrt.streaming` | Released and checksum-pinned custom ONNX inference |
 
-`StemgenRT58` denotes the current nine-state architecture. Earlier configurable
+`StemgenRT58` defaults to the current eight-state architecture. Earlier configurable
 and four-state models and their APIs have been removed. `research/` is ignored
 local experimentation and is not required for imports, tests or distributions.
 The complete earlier source
@@ -91,4 +96,4 @@ The implementation builds on [HS-TasNet](https://arxiv.org/abs/2402.17701) and
 [Phil Wang's implementation](https://github.com/lucidrains/hs-tasnet).
 
 The [draft paper](paper/README.md) documents the historical four-state C204
-predecessor; its results do not evaluate the current nine-state model.
+predecessor; its results do not evaluate the current eight-state model.

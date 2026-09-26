@@ -24,6 +24,15 @@ def new_model(window=32, past_filter=True):
     return model
 
 
+def test_default_model_exposes_current_eight_state_interface():
+    model = StemgenRT58()
+    state = model.initial_state(1)
+    assert type(state) is StreamingState and len(state) == 8
+    assert model.attention_window == 32 and not model.has_past_filter
+    assert model.parameter_tensor_count == 40 and model.training_precision == 'fp32'
+    assert model.algorithmic_latency_samples == 256
+
+
 def test_public_import_keeps_torch_lazy_and_has_no_research_dependency():
     script = """
 import sys
@@ -44,7 +53,7 @@ def test_native_matches_checkpoint_geometry_and_preserves_released_interface(win
     release = json.loads((Path(__file__).resolve().parents[1]
                           / "stemgenrt/streaming_models.json").read_text())["current"]
     state = model.initial_state(1)
-    assert (type(state) is StreamingState) == past_filter
+    assert (type(state) is StreamingState) == (not past_filter)
     assert tuple(release["states"]) == state._fields[:8]
     expected = dict(release["states"])
     expected["attention_keys"] = [1, window - 1, 64]
