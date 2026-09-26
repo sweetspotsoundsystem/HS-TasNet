@@ -22,9 +22,8 @@ _STATES = {name: tuple(shape) for name, shape in _MODELS["current"]["states"].it
 class StreamingSeparator:
     """Separate float32 audio at 44.1 kHz, preserving every recurrent state.
 
-    Released graphs have eight states; current shared-mask exports have
-    nine, including two past carrier frames. Custom exports require an explicit
-    checksum. Audio and state dimensions are checked before inference.
+    The model has eight states and a 32-frame attention window. Custom
+    exports require an explicit checksum and the same state dimensions.
 
     ``process_chunk`` accepts [2, 128] and returns [4, 2, 128], aligned to
     the previous input hop. Its first result after reset is ``None``.
@@ -57,17 +56,7 @@ class StreamingSeparator:
         self._session = ort.InferenceSession(
             str(path), sess_options=options, providers=["CPUExecutionProvider"]
         )
-        actual_inputs = {node.name: tuple(node.shape) for node in self._session.get_inputs()}
-        for window, past_filter in ((32, False), (128, False), (32, True)):
-            states = {**_STATES, "attention_keys": (1, window - 1, 64),
-                      "attention_values": (1, window - 1, 128)}
-            if past_filter:
-                states["past_carrier_history"] = (1, 2, 2, 513, 2)
-            if actual_inputs == {"audio_chunk": (1, 2, 128), **states}:
-                self._state_shapes = states
-                break
-        else:
-            raise ValueError("Model streaming interface differs")
+        self._state_shapes = dict(_STATES)
         inputs = {"audio_chunk": (1, 2, 128), **self._state_shapes}
         outputs = {"separated_chunk": (1, 4, 2, 128)}
         outputs.update({"next_" + name: shape for name, shape in self._state_shapes.items()})

@@ -8,7 +8,7 @@ import struct
 import numpy as np
 import pytest
 
-from stemgenrt.streaming import StreamingSeparator
+from stemgenrt.streaming import MODEL_SHA256, StreamingSeparator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +19,7 @@ def references(name="hop128-pytorch"):
     data = path.read_bytes()
     metadata = json.loads(path.with_suffix(".json").read_text())
     assert hashlib.sha256(data).hexdigest() == metadata["fixture_sha256"]
+    assert metadata["deployment_graph_sha256"] == MODEL_SHA256
     assert data[:8] == b"SGRTG001"
     count, = struct.unpack_from("<I", data, 8)
     offset = 12
@@ -96,9 +97,11 @@ def test_runtime_uses_the_checked_m4_backend_configuration(separator):
 
 @pytest.mark.parametrize("changed_name,changed_shape", [
     ("attention_keys", (1, 30, 64)),
+    ("attention_keys", (1, 127, 64)),
     ("attention_values", None),
     ("spec_memory_hidden", (1, 1, 499)),
     ("unexpected_state", (1, 1)),
+    ("past_carrier_history", (1, 2, 2, 513, 2)),
 ])
 def test_rejects_incomplete_or_changed_state_interface(separator, monkeypatch, changed_name, changed_shape):
     from types import SimpleNamespace
@@ -112,6 +115,7 @@ def test_rejects_incomplete_or_changed_state_interface(separator, monkeypatch, c
     nodes = [SimpleNamespace(name=name, shape=shape, type="tensor(float)")
              for name, shape in inputs.items()]
     monkeypatch.setattr(ort, "InferenceSession", lambda *args, **kwargs:
-                        SimpleNamespace(get_inputs=lambda: nodes))
+                        SimpleNamespace(get_inputs=lambda: nodes,
+                                        get_outputs=separator._session.get_outputs))
     with pytest.raises(ValueError, match="interface"):
         StreamingSeparator(ROOT / "models/hop128.onnx")

@@ -18,10 +18,8 @@ from stemgenrt import trainer
 
 
 class TinyModel(torch.nn.Module):
-    def __init__(self, *, attention_window=32, past_filter=True):
+    def __init__(self):
         super().__init__()
-        self.attention_window = attention_window
-        self.has_past_filter = past_filter
         self.weight = torch.nn.Parameter(torch.tensor(.25))
         self.register_buffer("fixed", torch.tensor(1.))
 
@@ -52,7 +50,7 @@ def endpoint(step=0):
 def harness(monkeypatch):
     config = trainer.TrainingConfig(steps=6, warmup=2, workers=0,
                                     device="cpu", precision="fp32", data_start=320,
-                                    past_filter=True, track_sampling="uniform",
+                                    past_filter=False, track_sampling="uniform",
                                     extra_ordinary_primary_sdr_weight=0.)
     corpus = SimpleNamespace(sha256="training-bytes", tracks=("training-track",),
                              root_weights={"recordings": 1.}, split="train")
@@ -118,7 +116,6 @@ def test_current_config_selects_frozen_teacher_baseline():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     selected = json.loads((root / 'configs/current-training.json').read_text())
-    assert selected == json.loads((root / 'configs/teacher-training.json').read_text())
     config = trainer.TrainingConfig(**selected).validate()
     assert config.steps == 2000 and config.data_start == 4132000
     assert config.seed == 20261102 and config.data_seed == 60
@@ -142,6 +139,7 @@ def test_current_config_selects_frozen_teacher_baseline():
     {"extra_ordinary_primary_sdr_weight": .4}, {"extra_ordinary_primary_sdr_weight": True},
     {"track_sampling": "unknown"}, {"track_sampling": None},
     {"attention_window": 64}, {"attention_window": True},
+    {"attention_window": 128}, {"past_filter": True}, {"track_sampling": "duration"},
 ])
 def test_config_rejects_incompatible_scientific_settings(changes):
     with pytest.raises(ValueError):
@@ -204,6 +202,7 @@ def test_resume_uses_restored_objects_cursor_identities_and_rng(harness, monkeyp
     config, corpus, calls, _ = harness
     model, optimizer, ema = endpoint(2)
     expected_config = asdict(replace(config, root_weights=corpus.root_weights))
+    expected_config.pop("past_filter")
     expected_config.pop("attention_window")
     expected_config.pop("extra_ordinary_primary_sdr_weight")  # Legacy baseline checkpoint identity.
     expected_config.pop("teacher_coefficient")
@@ -265,17 +264,6 @@ def test_primary_sdr_option_reaches_updates_and_checkpoint_config(harness, monke
     assert calls.saves[0]["config"]["extra_ordinary_primary_sdr_weight"] == .2
     saved_config = json.loads((tmp_path / "candidate/config.json").read_text())
     assert saved_config["extra_ordinary_primary_sdr_weight"] == .2
-
-
-def test_duration_sampler_is_bound_to_data_checkpoint_and_provenance(harness, tmp_path):
-    from stemgenrt.data import policy
-    config, _, calls, _ = harness
-    config = replace(config, track_sampling="duration", extra_ordinary_primary_sdr_weight=.2)
-    trainer.train(config, "train.json", tmp_path / "duration", stop_after=2)
-    assert calls.datasets[0][1]["track_sampling"] == "duration"
-    assert calls.saves[0]["config"]["track_sampling"] == "duration"
-    candidate = calls.updates[-1][2]
-    assert candidate.provenance["branch_memory_current_stage_augmentation"] == policy("duration")
 
 
 def test_resume_rejects_inconsistent_cursor_before_creating_run(harness, monkeypatch, tmp_path):

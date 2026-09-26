@@ -1,5 +1,11 @@
 # StemgenRT-5.8
 
+This is a divergent fork of [Phil Wang's HS-TasNet implementation](https://github.com/lucidrains/HS-TasNet),
+developed for the [StemgenRT audio plugin](https://github.com/sweetspotsoundsystem/stemgen-rt).
+It has a different model and a breaking Python API: use `stemgenrt` and
+`StemgenRT58` instead of `hs_tasnet`. Use the upstream repository if you need
+the original HS-TasNet implementation. See [migration and provenance](docs/provenance.md).
+
 Stereo streaming music separation into **drums, bass, vocals and other**.
 The current model combines spectral and waveform branches, causal attention,
 and recurrent branch memories. It uses **1024-sample analysis, 256-sample
@@ -8,7 +14,8 @@ The **5.8** suffix identifies the latency variant: 128 samples of graph delay
 plus StemgenRT's 128-sample worker queue give 256 samples at 44.1 kHz, rounded
 to **5.8 ms of graph-plus-host algorithmic latency**, excluding audio-device
 latency. Model revisions and Python package versions are tracked separately
-from this latency suffix.
+from this latency suffix. Python package version **0.6.2** targets the model
+released with [StemgenRT v0.6.2](https://github.com/sweetspotsoundsystem/stemgen-rt/releases/tag/v0.6.2).
 
 ## Run the released model
 
@@ -58,20 +65,18 @@ training recipe is retained in `configs/current-training.json`: BF16 learned
 operations, uniform track sampling, ordinary/auxiliary microbatches of 16/2,
 and teacher coefficient 1.0. The teacher is absent from inference.
 
-Checkpoint loading preserves the saved architecture. The 128-frame attention
-and nine-state shared-mask variants remain available for loading historical
-experiments; those experiment lines and the FP32/BF16 diagnostic are closed.
-The released ONNX download remains pinned to the shipped v0.6.1 product
-baseline. Source checkpoint quality and deployment graph quality are measured
-separately; see [provenance](docs/provenance.md).
+The released ONNX download is pinned to StemgenRT v0.6.2, which deploys the
+frozen research checkpoint and scores **4.564148 dB** on the same panel.
+The v0.6.1 product baseline remains the historical comparison and rollback
+reference; see [provenance](docs/provenance.md).
 
 The maintained package includes deterministic crop/pitch/remix augmentation,
 the whole-group weighted source-view objective, Adam and EMA, lossless complete
 recovery, native/ONNX evaluation and verified export. Read the
 [training and evaluation guide](docs/training.md) for checkpoint requirements,
 portable manifests and commands. Native FP32 weights cannot be reconstructed
-losslessly from the released integer graph; provide an authenticated native
-checkpoint or explicitly start from scratch.
+losslessly from the released integer graph; provide a native checkpoint with
+its SHA-256 or explicitly start from scratch.
 
 ## Supported source
 
@@ -80,20 +85,14 @@ checkpoint or explicitly start from scratch.
 | `stemgenrt.model` | Current native model, states and detached context |
 | `stemgenrt.data` | Portable manifests and deterministic training augmentation |
 | `stemgenrt.losses` | Whole-group objectives and one Adam/EMA update |
-| `stemgenrt.checkpoint` | Native checkpoint authentication and complete recovery |
+| `stemgenrt.checkpoint` | Checkpoint verification and complete recovery |
 | `stemgenrt.trainer` | Portable finite training and resume |
 | `stemgenrt.evaluation` | Physical alignment and per-stem metrics |
 | `stemgenrt.export` | Current fixed-geometry ONNX export |
 | `stemgenrt.streaming` | Released and checksum-pinned custom ONNX inference |
 
-`StemgenRT58` defaults to the current eight-state architecture. Earlier configurable
-and four-state models and their APIs have been removed. `research/` is ignored
-local experimentation and is not required for imports, tests or distributions.
-The complete earlier source
-snapshot remains in git history; see [provenance and migration](docs/provenance.md).
+`StemgenRT58` supports the current eight-state architecture. Earlier models,
+experimental variants and draft papers remain in git history.
 
 The implementation builds on [HS-TasNet](https://arxiv.org/abs/2402.17701) and
 [Phil Wang's implementation](https://github.com/lucidrains/hs-tasnet).
-
-The [draft paper](paper/README.md) documents the historical four-state C204
-predecessor; its results do not evaluate the current eight-state model.

@@ -2,9 +2,8 @@
 
 StemgenRT-5.8 has fixed audio geometry: stereo 44.1 kHz input, 1024-sample
 analysis, 256-sample synthesis, a 128-sample hop and eight streaming states.
-The native default uses 32 attention frames. The 128-frame and nine-state
-shared-mask experiments remain explicitly selectable. Their geometry is recorded
-in model, checkpoint and export metadata.
+The model uses 32 attention frames. Its fixed geometry is recorded in model,
+checkpoint and export metadata.
 Install the appropriate PyTorch 2.8.0 build, then `pip install -e '.[training,onnx,test]'`.
 The export dependencies are pinned because integer lowering verifies a specific
 ONNX node inventory.
@@ -41,8 +40,7 @@ checked for overlap. It is a split guard, not an automatic evaluation schedule.
 
 ## Current recipe
 
-`configs/current-training.json` and `configs/teacher-training.json` retain the
-recipe that produced the frozen teacher-assisted EMA research baseline:
+`configs/current-training.json` contains the recipe that produced the frozen teacher-assisted EMA research baseline:
 
 | Setting | Value |
 | --- | --- |
@@ -63,20 +61,20 @@ recipe that produced the frozen teacher-assisted EMA research baseline:
 | Streaming geometry | 32 attention frames; eight states; no past filter |
 | First absolute sample address | 4,132,000 |
 
-This recipe starts from the authenticated parent EMA with fresh Adam and EMA
+This recipe starts from the verified parent EMA with fresh Adam and EMA
 state. It records the 2,000-update schedule and original data address; reproducing
 the sequence also requires the same ordered 301-track inventory and parent.
 Starting it from the best endpoint would be a new continuation, not reproduction.
 The generic `TrainingConfig` starts at address zero with teacher supervision
-disabled; these two explicit configs enable the pinned teacher described below.
+disabled; the supplied configuration enables the pinned teacher described below.
 Portable recovery checkpoints are saved every 50 updates, retaining optimizer,
 EMA, RNG and the next absolute sample address.
 
 The selected source checkpoint scores **4.564402 dB** on the unchanged development
-panel. This does not establish a fresh held-out result or the exported graph's
-quality and host performance. The research baseline and shipped v0.6.1 product
-baseline are frozen. The FP32/BF16 diagnostic, 128-frame attention and shared-mask
-experiments are closed; their retained code does not select a new training run.
+panel. The separately evaluated v0.6.2 deployment graph scores **4.564148 dB**
+on that panel; neither score establishes a fresh held-out result or host
+performance. The research baseline and historical v0.6.1 product baseline
+remain frozen; see [provenance](provenance.md).
 
 The auxiliary source views retain their original weights and whole-group
 denominators. Source remixing is addressed in groups of 16. Warmup initializes
@@ -90,98 +88,19 @@ multiple of 16. A small CPU experiment needs `device="cpu"`, `precision="fp32"`
 and typically `workers=0`; the trainer still requires the full crop and batch
 geometry. Reducing the stopping point does not shorten the configured schedule.
 
-### Primary SDR ablation
+### Objective
 
-`configs/primary-sdr-ablation.json` keeps the same recipe and adds
-`extra_ordinary_primary_sdr_weight=0.2`. This increases the ordinary primary
-negative-SDR coefficient from 0.2 to 0.4. The absence coefficient stays 0.1,
-the relative raw-head anchor stays 0.01, and the auxiliary source-view loss
-keeps its existing joint reduction and weights. The inference graph and
-algorithmic latency are unchanged.
-
-This is an experimental training option; improved separation quality has not
-been established. Compare new runs from the same native checkpoint, data
-addresses and schedule. Select this configuration when starting a fresh
-Adam/EMA run. Its coefficient is saved in checkpoint configuration and cannot
-change during exact resume. The default is zero additional weight; baseline
-configuration serialization remains compatible with existing checkpoints.
-
-### Duration-weighted sampling experiment
-
-`configs/duration-weighted-training.json` keeps the primary SDR ablation's
-objective and schedule and sets `track_sampling="duration"`. Within each
-corpus, a track's probability is proportional to its effective frame count.
-Corpus weights remain unchanged. This reduces repeated exposure to short
-recordings; it does not add recordings or control artist diversity.
-
-Both original and expanded crops use the same integer duration weights.
-Corpus draws, vocal-anchor rules and augmentation settings are retained;
-the selected tracks and subsequent offset draws change. Samples remain
-deterministic by seed and absolute address across worker counts and resume.
-The default `track_sampling="uniform"` preserves the previous crop sequence.
-
-Start a fresh Adam/EMA run to change sampling. Duration mode and its policy
-are recorded in checkpoint configuration and provenance; exact resume rejects
-a different sampler. The supplied configuration uses no online teacher.
-This experiment changes training data exposure only: separation improvement
-has not been established, and inference geometry and latency are unchanged.
-
-### Attention-128 experiment
-
-`configs/attention128-training.json` keeps the duration-weighted experiment's
-data, objective and 2,000-update schedule and sets `attention_window=128`.
-The attention caches hold 127 prior frames instead of 31. This increases state
-by 73,728 bytes per stream, without changing learned tensor shapes, analysis,
-synthesis, hop size, or the 256-sample graph-plus-host algorithmic delay.
-Separation improvement and physical real-time host performance are unmeasured.
-
-```bash
-python train_streaming.py --config configs/attention128-training.json \
-  --manifest data/train.json --validation-manifest data/valid.json \
-  --checkpoint models/parent-ema.pt --sha256 EXPECTED_CHECKPOINT_SHA256 \
-  --role ema --output runs/attention128
-```
-
-Fresh checkpoint initialization preserves every learned tensor and fixed
-buffer, then explicitly selects the configuration's window before creating
-Adam and EMA. Changing the window starts a new experiment. Exact resume keeps
-the saved geometry and rejects a changed window. Model loading for inference
-always preserves the checkpoint's window. ONNX export derives cache shapes
-from that model and verifies the corresponding eight-state trajectory.
-
-The configurations explicitly record their past-filter geometry and preserve
-their checkpoint identities. The current model and `TrainingConfig` use eight
-states and 32 attention frames. The trainer defaults to BF16, uniform sampling,
-ordinary/auxiliary microbatches of 16/2 and the 0.4 ordinary SDR coefficient. Historical
-packed research archives still require their archived decoder.
-
-### Shared-mask past-frame correction
-
-`configs/shared-mask-training.json` retains the earlier nine-state experiment.
-That model predicts 16,000 additional FP32 gate parameters and reuses the
-existing frequency masks to combine the two preceding carrier spectra. Its ninth
-state is `[batch, 2, 2, 513, 2]`; reset and detached warmup include that entire state.
-It adds no future callback, FFT transform, or audio queue. The graph-plus-host
-algorithmic delay remains 256 samples. This experiment is closed and its checkpoint was not selected for deployment.
-
-Fresh initialization from a historical 32-frame checkpoint copies all inherited
-tensors and starts the new gate at zero. This preserves the parent's initial
-output while changing the complete model fingerprint. Adam owns all 41 parameter
-tensors, and EMA starts from the complete initialized model, including the new
-gate. Portable training checkpoints use a distinct shared-mask schema and retain
-all raw/Adam/EMA tensors, RNG streams, data cursor and configuration. Exact resume
-rejects a different architecture. Historical checkpoints remain eight-state;
-loading them for inference does not add a gate. FP32 and integer exports preserve
-the new gate in FP32 and verify all nine recurrent states.
-
+The default `extra_ordinary_primary_sdr_weight=0.2` gives a total ordinary
+primary negative-SDR coefficient of **0.4** (base 0.2 plus additional 0.2).
+The absence coefficient is 0.1 and the relative raw-head anchor is 0.01.
+Auxiliary source views retain their joint reduction and weights. The saved
+configuration includes these choices; exact resume requires the same values.
 
 ### Teacher-assisted baseline
 
-`configs/teacher-training.json` adds `teacher_coefficient=1.0` to the primary
-SDR ablation. It retains the ordinary ground-truth loss and auxiliary source
-views. Its saved EMA is the frozen 4.564402 dB research baseline.
-Review deployment quality, instrumental leakage, isolated and quiet vocals,
-and Other separately before accepting a plugin build.
+`configs/current-training.json` uses `teacher_coefficient=1.0` alongside the
+ordinary ground-truth loss and auxiliary source views. Its saved EMA is the
+frozen 4.564402 dB research baseline.
 
 Install the optional training dependency and obtain the pinned teacher:
 
@@ -199,9 +118,8 @@ the loaded model state, and the pinned Demucs source files before use. The
 teacher extra pins Demucs commit `e976d93ecc3865e5757426930257e200846a520a`
 and Julius 0.2.7. Downloaded teacher weights remain separate from this package.
 
-Start with the usual training command below, substituting
-`--config configs/teacher-training.json`. Set `teacher_checkpoint` in a copied
-JSON config to use another local location for the same authenticated bytes.
+Use the training command below. Set `teacher_checkpoint` in a copied JSON
+config to use another local location for the same verified weights.
 The CLI sets one CPU thread; library callers must call
 `torch.set_num_threads(1)` before enabling the teacher.
 
@@ -305,7 +223,7 @@ change the deployment graph or its algorithmic latency.
 
 ## Export
 
-Export either checkpoint role with its saved eight- or nine-state interface:
+Export either checkpoint role with its eight-state interface:
 
 ```bash
 python scripts/export_streaming_model.py \

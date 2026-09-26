@@ -253,8 +253,6 @@ def test_grouped_update_has_one_commit_boundary_and_can_retry_interruption(monke
 
     class TinyModel(torch.nn.Module):
         architecture_metadata = {"test": "40 small FP32 parameters"}
-        attention_window = 128
-        has_past_filter = False
         parameter_tensor_count = 40
 
         def __init__(self):

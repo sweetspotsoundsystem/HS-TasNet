@@ -1,9 +1,9 @@
 {
   "current": {
     "filename": "hop128.onnx",
-    "url": "https://media.githubusercontent.com/media/sweetspotsoundsystem/stemgen-rt/35b533017b32099f417b6c965e37214b72a8ccea/model/model.onnx",
-    "sha256": "08424ca91feae8d4746442a35ebf70489dea70ea6e81401b39483cf02d497748",
-    "bytes": 37532574,
+    "url": "https://media.githubusercontent.com/media/sweetspotsoundsystem/stemgen-rt/61df8f4aa1555ef110308d01ea92b54ace770979/model/model.onnx",
+    "sha256": "77164d6a581fafb2a31f53fd8ffde44c07cf618472952a4cdba14e68dda3b8b9",
+    "bytes": 37529132,
     "states": {
       "audio_history": [
         1,

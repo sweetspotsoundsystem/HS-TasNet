@@ -48,7 +48,7 @@ jobs:
       - name: Download the current release
         run: python scripts/download_streaming_model.py
       - name: Check model, losses, data, recovery, export and evaluation
-        run: python scripts/run_cpu_tests.py -q
+        run: python -m pytest -q
       - name: Build distributions and reject archived code
         run: |
           python -m build
@@ -63,8 +63,8 @@ jobs:
               else:
                   with tarfile.open(path) as archive:
                       names = archive.getnames()
-              # sync_research.py now compares local hashes without copying research.
-              forbidden = {'research', 'runs', 'stemgenrt.py', 'streaming_model.py',
+              forbidden = {'research', 'runs', 'paper', 'AGENTS.md', 'sync_research.py',
+                           'run_cpu_tests.py', 'stemgenrt.py', 'streaming_model.py',
                            'streaming_trainer.py', 'export_onnx.py'}
               assert not any(forbidden.intersection(Path(name).parts) for name in names), path
               assert not any(name.endswith(('.pt', '.onnx')) for name in names), path

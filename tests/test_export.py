@@ -14,10 +14,10 @@ from stemgenrt._export.fp32 import make_export_copy
 from stemgenrt._export.helpers import state_sha256
 
 
-def active_model(window=32, past_filter=True):
+def active_model():
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(617)
-        model = StemgenRT58(attention_window=window, past_filter=past_filter)
+        model = StemgenRT58()
         # Exercise trained paths whose residual projection starts at zero.
         with torch.no_grad():
             for parameter in model.parameters():
@@ -26,12 +26,11 @@ def active_model(window=32, past_filter=True):
     return model
 
 
-@pytest.mark.parametrize("variant,window,past_filter", (("fp32", 32, False), ("fp32", 128, False),
-    ("integer", 32, False), ("integer", 128, False), ("fp32", 32, True), ("integer", 32, True)))
-def test_export_matches_reference_trajectory_without_mutating_source(tmp_path, variant, window, past_filter):
+@pytest.mark.parametrize("variant", ("fp32", "integer"))
+def test_export_matches_reference_trajectory_without_mutating_source(tmp_path, variant):
     import onnx
     torch.set_num_threads(1)
-    model = active_model(window, past_filter).train()
+    model = active_model().train()
     if variant == 'integer':
         from stemgenrt import teacher
         teacher.attach(model, teacher.specification(1.))
@@ -49,10 +48,10 @@ def test_export_matches_reference_trajectory_without_mutating_source(tmp_path, v
     before = state_sha256(model.state_dict())
     rng = torch.get_rng_state().clone()
     path = tmp_path / "current.onnx"
-    report = export_model(model, path, verify_hops=window + 4 if variant == "integer" else 12, variant=variant)
+    report = export_model(model, path, verify_hops=36 if variant == "integer" else 12, variant=variant)
     assert report["status"] == "pass"
     assert report["verification"]["passed"]
-    assert len(report["verification"]["state_errors_decoded_units"]) == 8 + int(past_filter)
+    assert len(report["verification"]["state_errors_decoded_units"]) == 8
     assert report["verification"]["reset_replay_exact"]
     assert state_sha256(model.state_dict()) == before
     assert [module.training for module in model.modules()] == flags
@@ -74,8 +73,8 @@ def test_export_matches_reference_trajectory_without_mutating_source(tmp_path, v
     from stemgenrt.streaming import StreamingSeparator
     from stemgenrt.checkpoint import file_sha256
     separator = StreamingSeparator(path, expected_sha256=file_sha256(path))
-    assert ("past_carrier_history" in separator._state) == past_filter
-    assert separator._state["attention_keys"].shape == (1, window - 1, 64)
+    assert len(separator._state) == 8
+    assert separator._state["attention_keys"].shape == (1, 31, 64)
     audio = np.random.default_rng(71).normal(0, .02, (2, 255)).astype(np.float32)
     stems = separator.separate(audio)
     assert stems.shape == (4, 2, 255) and separator.flush() is None

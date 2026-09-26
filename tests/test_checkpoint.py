@@ -14,7 +14,7 @@ from stemgenrt.checkpoint import (
     ParameterEMA, file_sha256, load_model, load_native_checkpoint,
     load_training_checkpoint, save_training_checkpoint, state_sha256,
 )
-from stemgenrt.model import StemgenRT58, VERSION, WINDOW_VERSION, LEGACY_VERSION, render_scored_context
+from stemgenrt.model import StemgenRT58, VERSION, render_scored_context
 
 
 def tree_fingerprint(value):
@@ -37,10 +37,10 @@ def tree_fingerprint(value):
     return digest.hexdigest()
 
 
-def model(window=128, past_filter=False):
+def model():
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(617)
-        result = StemgenRT58(attention_window=window, past_filter=past_filter).train()
+        result = StemgenRT58().train()
         # Exercise the initially zero branch output projections as well.
         with torch.no_grad():
             for parameter in result.parameters():
@@ -64,30 +64,15 @@ def advance(candidate, optimizer, ema, step):
     return float(loss.detach())
 
 
-@pytest.mark.parametrize('with_teacher,track_sampling,window,past_filter', [
-    (False, 'uniform', 32, False), (True, 'uniform', 32, False),
-    (False, 'duration', 32, False), (False, 'duration', 128, False),
-    (False, 'duration', 32, True)])
-def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher, track_sampling, window, past_filter):
+@pytest.mark.parametrize("with_teacher", [False, True])
+def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher):
     torch.set_num_threads(1)
     random.seed(192); np.random.seed(192); torch.manual_seed(192)
-    candidate = model(window, past_filter)
+    candidate = model()
     optimizer = torch.optim.Adam(candidate.parameters(), lr=3e-5, foreach=False)
     ema = ParameterEMA(candidate)
     config = {"steps": 3, "batch_size": 1, "data_start": 400, "lr": 3e-5,
               "precision": "fp32", "seed": 192}
-    if window == 128:
-        config["attention_window"] = window
-    if past_filter:
-        config["past_filter"] = True
-    if track_sampling == "duration":
-        from stemgenrt.data import policy
-        config["track_sampling"] = "duration"
-        with pytest.raises(ValueError, match="track sampling policy"):
-            save_training_checkpoint(tmp_path / "missing-policy.pt", candidate, optimizer, ema,
-                step=0, next_sample_index=400, config=config, data_identity={})
-        assert not (tmp_path / "missing-policy.pt").exists()
-        candidate.provenance["branch_memory_current_stage_augmentation"] = policy("duration")
     if with_teacher:
         from stemgenrt import teacher
         specification = teacher.specification(1.)
@@ -124,15 +109,14 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher,
         load_training_checkpoint(path, config={**config, "lr": 1e-3}, data_identity=data)
     with pytest.raises(ValueError, match="configuration"):
         load_training_checkpoint(path, config={**config, "track_sampling":
-            "uniform" if track_sampling == "duration" else "duration"}, data_identity=data)
+            "duration"}, data_identity=data)
     with pytest.raises(ValueError, match="configuration"):
         load_training_checkpoint(path, config={**config, "extra_ordinary_primary_sdr_weight": .2},
                                  data_identity=data)
     restored = load_training_checkpoint(path, sha256=bound["sha256"], config=config, data_identity=data)
     assert restored.step == 1 and restored.next_sample_index == 401 and restored.metadata == {"note": "test"}
-    assert restored.model.has_past_filter == past_filter
-    assert restored.model.parameter_tensor_count == 40 + int(past_filter)
-    assert restored.model.attention_window == window
+    assert restored.model.parameter_tensor_count == 40
+    assert restored.model.attention_window == 32
     assert state_sha256(restored.model.state_dict()) == saved_raw
     assert tree_fingerprint(restored.optimizer.state_dict()) == saved_optimizer
     assert tree_fingerprint(restored.ema.state_dict(restored.model)) == saved_ema
@@ -149,33 +133,26 @@ def test_exact_next_update_after_portable_packed_restore(tmp_path, with_teacher,
     assert state_sha256(raw.state_dict()) == saved_raw
     if with_teacher:
         assert raw.provenance[teacher.PROVENANCE_KEY] == specification
-    if track_sampling == "duration":
-        assert raw.provenance["branch_memory_current_stage_augmentation"] == policy("duration")
     assert not raw.training and not any(p.requires_grad for p in raw.parameters())
     del raw
     averaged = load_model(path, expected_sha256=bound["sha256"], role="ema")
     assert averaged.provenance["checkpoint_weight_role"] == "averaged_inference"
     if with_teacher:
         assert averaged.provenance[teacher.PROVENANCE_KEY] == specification
-    if track_sampling == "duration":
-        assert averaged.provenance["branch_memory_current_stage_augmentation"] == policy("duration")
     assert tree_fingerprint(checkpoint._rng_state()) == inference_rng
     assert not torch.cuda.is_initialized()
     path.unlink()
 
 
-@pytest.mark.parametrize("window,past_filter", ((32, False), (128, False), (32, True)))
-def test_native_checkpoint_authentication_and_role(tmp_path, window, past_filter):
+def test_native_checkpoint_authentication_and_role(tmp_path):
     torch.set_num_threads(1)
-    candidate = model(window, past_filter)
+    candidate = model()
     plan_sha = "d" * 64
-    prefix = "past_filter" if past_filter else "attention_window" if window == 128 else "branch_memory"
-    provenance = {**candidate.provenance, prefix + "_version": VERSION if past_filter else WINDOW_VERSION if window == 128 else LEGACY_VERSION,
+    prefix = "branch_memory"
+    provenance = {**candidate.provenance, prefix + "_version": VERSION,
         prefix + "_updates": 2, prefix + "_parent_updates": 10, "training_updates": 12,
         prefix + "_training_plan_sha256": plan_sha, prefix + "_all_neural_parameters_trained": True}
-    if window == 128 or past_filter:
-        provenance[prefix + "_initial_model_state_sha256"] = "e" * 64
-    payload = {"schema": checkpoint.SHARED_NATIVE_SCHEMA if past_filter else checkpoint.WINDOW_NATIVE_SCHEMA if window == 128 else checkpoint.NATIVE_SCHEMA,
+    payload = {"schema": checkpoint.NATIVE_SCHEMA,
         "step": 2, "model": candidate.state_dict(),
         "model_state_sha256": state_sha256(candidate.state_dict()), "architecture": candidate.architecture_metadata,
         "fixed_buffers_sha256": state_sha256(dict(candidate.named_buffers())),
@@ -189,16 +166,17 @@ def test_native_checkpoint_authentication_and_role(tmp_path, window, past_filter
     restored, metadata = load_native_checkpoint(path, sha256=digest)
     assert state_sha256(restored.state_dict()) == expected == metadata["model_state_sha256"]
     assert restored.provenance["checkpoint_weight_role"] == "raw_optimizer_endpoint"
-    assert restored.attention_window == window
+    assert restored.attention_window == 32
     del restored, metadata
     with pytest.raises(ValueError, match="SHA-256"):
         load_native_checkpoint(path, sha256="0" * 64)
     with pytest.raises(ValueError, match="weight role"):
         load_model(path, expected_sha256=digest, role="ema")
     payload = torch.load(path, weights_only=True)
-    payload["schema"] = checkpoint.NATIVE_SCHEMA if window == 128 else checkpoint.WINDOW_NATIVE_SCHEMA
-    with pytest.raises(ValueError, match="schema and model geometry"):
-        checkpoint._native_payload_model(payload)
+    for schema in ("stemgenrt-attention128-inference-v1", "stemgenrt-shared-mask-inference-v1"):
+        payload["schema"] = schema
+        with pytest.raises(ValueError, match="Unsupported native checkpoint schema"):
+            checkpoint._native_payload_model(payload)
     path.unlink()
 
 

@@ -9,10 +9,12 @@ See the [model overview](../README.md) for the latency suffix definition.
 
 Download with `python scripts/download_streaming_model.py`. The file's pinned
 identity and immutable download URL are in `stemgenrt/streaming_models.json`.
-The graph is 37,532,574 bytes, SHA-256
-`08424ca91feae8d4746442a35ebf70489dea70ea6e81401b39483cf02d497748`.
+The StemgenRT v0.6.2 graph is 37,529,132 bytes, SHA-256
+`77164d6a581fafb2a31f53fd8ffde44c07cf618472952a4cdba14e68dda3b8b9`.
 Use ONNX Runtime 1.26.0 CPU; the public wrapper sets one thread and disables
 KleidiAI to match the release. Weights are not bundled with Python packages.
+When upgrading, move an older `models/hop128.onnx` aside before downloading;
+the downloader preserves existing files and refuses to overwrite a different model.
 
 | Input | Shape | Output |
 | --- | --- | --- |

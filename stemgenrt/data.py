@@ -15,7 +15,6 @@ from ._data.manifest import (
     FrozenAudioFile, FrozenTrack, load_manifest, build_manifest, require_disjoint, file_sha256,
 )
 from ._data.sampling import CounterAddressedCropDataset, AbsoluteIndexSampler, worker_init
-from ._data.duration import DurationWeightedCropDataset
 from ._data.augmentation import (
     ADDRESS_RECIPE_VERSION, VERSION, AUGMENTATION, GROUP_SIZE, WARMUP_SAMPLES,
     SCORED_SAMPLES, CROP_SAMPLES, EXPANDED_SAMPLES, LongContextCropDataset,
@@ -45,11 +44,10 @@ def make_dataset(tracks, config, final_index):
                   vocal_active_probability=config.get("vocal_active_probability", .85),
                   final_sample_index=final_index)
     mode = config.get("track_sampling", "uniform")
-    if mode not in ("uniform", "duration"):
-        raise ValueError("track_sampling must be uniform or duration")
+    if mode != "uniform":
+        raise ValueError("The current recipe requires uniform track sampling")
     def crops(frames):
-        original = CounterAddressedCropDataset(tracks, crop_samples=frames, **kwargs)
-        return DurationWeightedCropDataset(original) if mode == "duration" else original
+        return CounterAddressedCropDataset(tracks, crop_samples=frames, **kwargs)
     return LongContextCropDataset(
         crops(CROP_SAMPLES), crops(EXPANDED_SAMPLES),
         seed=config.get("seed", 20261102), ffmpeg=config.get("ffmpeg", "ffmpeg"))
@@ -72,8 +70,8 @@ def audio_sha(mixture, targets):
 
 
 def policy(track_sampling="uniform"):
-    if track_sampling not in ("uniform", "duration"):
-        raise ValueError("track_sampling must be uniform or duration")
+    if track_sampling != "uniform":
+        raise ValueError("The current recipe requires uniform track sampling")
     result = {"version": "latency58-four-second-score-pitch-tempo-remix-v1",
             "pitch_tempo_version": VERSION, "address_recipe_version": ADDRESS_RECIPE_VERSION,
             "selection_probability": .2, "semitones_uniform_inclusive": [-2, 2],
@@ -89,22 +87,14 @@ def policy(track_sampling="uniform"):
             "warmup_samples": WARMUP_SAMPLES, "scored_samples": SCORED_SAMPLES,
             "complete_scored_one_second_windows": 4,
             "expanded_length_rule": "ceil(returned_crop_samples / .88 / 128) * 128"}
-    if track_sampling == "duration":
-        result.update(version="recorded301-duration-weighted-track-selection-v1",
-            track_selection={"within_corpus_probability": "effective_frames / sum(effective_frames)",
-                "integer_weights": True, "root_sampling_weights_changed": False,
-                "original_and_expanded_use_same_track_weights": True,
-                "source_reader_and_anchor_policy_changed": False,
-                "addressed_track_and_offset_sequence_changed": True},
-            production_recipe_selected=False)
     return result
 
 
 def validate_checkpoint(config, provenance):
-    """Require duration checkpoints to identify the sampler that produced them."""
+    """Reject checkpoints from a different track sampling recipe."""
     mode = config.get("track_sampling", "uniform")
     expected = policy(mode)
     saved = provenance.get("branch_memory_current_stage_augmentation")
-    if mode == "duration" or (isinstance(saved, dict) and "track_selection" in saved):
+    if isinstance(saved, dict) and "track_selection" in saved:
         if saved != expected:
             raise ValueError("Checkpoint track sampling policy differs from its configuration")
